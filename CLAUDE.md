@@ -62,9 +62,44 @@ deployment-manager, memory-manager, compliance-reviewer). Use them for their
 domains; compliance-reviewer is read-only and should review any change
 touching policy, outreach content, billing, or deployment code.
 
-## Current phase
+## Status — where we are and where to continue
 
-Phase A complete (scaffold, schemas, policy engine, pipelines, mocks, demo,
-dashboard). Next: Phase B (Playwright/Lighthouse auditing), C (real Instantly/
-Gmail/Stripe/Vercel adapters), D (React+Framer Motion builds, deploy flow),
-E (experiments, reporting, design-reference ingestion).
+### Done (Phase A — complete, committed, pushed, 49 tests green)
+
+- Monorepo scaffold, all zod schemas, SQLite store + durable job queue
+- PolicyEngine (8 gates, PolicyTickets, dry-run forcing) + safety test suite
+- Full dry-run pipeline: intake → audit (mock/http) → score → contact →
+  draft → approval → simulated Instantly send → reply classification →
+  opportunity → preview build → billing draft → daily report
+- Mock adapters for all integrations; credential detection + OwnerRequest
+  bootstrap (7 open requests = the real-world blockers)
+- Express API (owner auth, HMAC webhooks, review queue) + React dashboard
+  (17 sections, side-by-side audit vs preview, policy editor)
+- CLAUDE.md, 8 subagents, README, docs/architecture.md, docs/setup.md
+- Verified: `npm run demo` end-to-end; live API smoke test; dashboard build
+
+### NEXT: Phase B (start here)
+
+Goal: real browser-grade auditing behind `AUDITOR_MODE=playwright`.
+
+1. Add `playwright` dep to workers/site-auditor; detect installed browsers
+   and fall back to `http` mode gracefully when missing (no crash).
+2. Playwright audit mode: screenshots (desktop + mobile viewports) saved to
+   `data/screenshots/<leadId>/`, wired into `WebsiteAudit.pages[].screenshotPath`.
+3. Lighthouse integration → real scores into `WebsiteAudit.lighthouse`.
+4. axe-core accessibility scan → `WebsiteAudit.a11yFindings`.
+5. Authed API route to serve screenshots; show them on the LeadDetail page.
+6. Playwright quality check of GENERATED previews (site-builder output):
+   screenshot + Lighthouse gate before owner review.
+7. Tests for fallback behavior + preview quality-check pipeline. Real runs
+   need `npx playwright install chromium`; keep CI/demo on mock mode.
+
+### Then
+
+- **Phase C** — real adapters (instantly/gmail/stripe/vercel) behind the
+  existing interfaces in packages/integrations; select by credential presence.
+- **Phase D** — React+Framer Motion full builds, revision loop, deploy
+  approval flow (`TODO(phase-d)` in apps/api decide route: DEPLOY_PRODUCTION
+  follow-through job).
+- **Phase E** — experiment engine, weekly reports, transcript/design-reference
+  ingestion (adapter interface exists, mock only).
