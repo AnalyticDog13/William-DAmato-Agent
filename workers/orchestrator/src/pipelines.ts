@@ -38,6 +38,7 @@ import { createInvoiceDraft, executeInvoiceDraft } from "@william/worker-billing
 import { suggestCall } from "@william/worker-scheduling";
 import { requestApproval } from "./approvals";
 import { evaluateGate, operationalTicket, type AppContext } from "./context";
+import { assignVariant, runningExperiment } from "./experiments";
 
 // ─── Lead intake (synchronous entry point used by API, CSV import, seeds) ───
 
@@ -304,7 +305,16 @@ const handleDraft: JobHandler = async (ctx, job) => {
     return;
   }
 
-  const draft = createFirstTouchDraft({ lead, company, contact, audit, traceId: job.traceId });
+  // A running outreach_variant experiment assigns the copy variant (deterministic per lead).
+  const experiment = runningExperiment(ctx, "outreach_variant");
+  const draft = createFirstTouchDraft({
+    lead,
+    company,
+    contact,
+    audit,
+    variant: experiment ? assignVariant(experiment, lead.id) : undefined,
+    traceId: job.traceId,
+  });
   const problems = validateDraft(draft);
   if (problems.length > 0) throw new Error(`Draft failed content rules: ${problems.join(", ")}`);
 
@@ -497,10 +507,11 @@ const handleFollowUp: JobHandler = async (ctx, job) => {
   const problems = validateDraft(draft);
   if (problems.length > 0) throw new Error(`Follow-up draft failed content rules: ${problems.join(", ")}`);
 
-  // Same human-approval gate as every outbound outreach email — same risk
-  // class, per-draft approval. TODO(phase-e): decide whether follow-ups get a
-  // dedicated SEND_FOLLOW_UP gate; sharing means autopilot policy on
-  // SEND_FIRST_TOUCH covers follow-ups too (deliberate for now).
+  // Same human-approval gate as every outbound outreach email. DECIDED
+  // (phase E): follow-ups keep sharing SEND_FIRST_TOUCH — same risk class
+  // (outbound email to a prospect), each draft still gets its own approval,
+  // and one autopilot policy intentionally covers the whole sequence.
+  // Revisit only if the owner wants follow-ups on a separate autopilot.
   const approval = requestApproval(ctx, {
     gate: "SEND_FIRST_TOUCH",
     subjectType: "OutreachDraft",
@@ -709,24 +720,10 @@ const handlePreviewBuild: JobHandler = async (ctx, job) => {
   const { project: checked, note: qualityNote } = await attachQualityCheck(ctx, built, lead.id);
   let project = checked;
 
-  // Preview deploys are operational (audited, ungated); production stays
-  // behind DEPLOY_PRODUCTION. NOTE: operational tickets carry no credential,
-  // so they are dry-run in EVERY env today — this records the intent without
-  // uploading. TODO(phase-e): before plumbing credentials into operational
-  // tickets, make preview deploys owner-triggered — this job is reachable
-  // from webhook-originated positive replies (compliance advisory D4).
-  const vercelCred = ctx.store.credentialStatuses.findByKey("integration:vercel")[0];
-  if (vercelCred && vercelCred.mode !== "missing" && project.previewPath) {
-    const ticket = operationalTicket(ctx, "vercel.deployPreview", { type: "SiteProject", id: project.id, leadId: lead.id }, job.traceId);
-    const result = await ctx.integrations.vercel.deploy(ticket, {
-      target: "preview",
-      projectName: deployProjectName(company.name),
-      sourcePath: project.buildPath ?? dirname(project.previewPath),
-    });
-    recordDeployment(ctx, project, "preview", result, null);
-    if (result.ok && result.url) project = { ...project, previewUrl: result.url };
-  }
-
+  // Preview deploys are owner-triggered only (POST /api/site-projects/:id/
+  // deploy-preview → deploy.preview job). This build job is reachable from
+  // webhook-originated positive replies, so it must never reach an external
+  // host on its own (compliance advisory D4, resolved phase E).
   ctx.store.siteProjects.insert(project);
   ctx.store.writeActivity(
     lead.id,
@@ -836,6 +833,49 @@ const handleDeployProduction: JobHandler = async (ctx, job) => {
   );
 };
 
+/**
+ * Owner-triggered preview deploy (operational: audited, ungated — production
+ * stays behind DEPLOY_PRODUCTION). The ticket carries the vercel credential
+ * status, so it executes for real only outside local with credentials present
+ * (engine rules); otherwise it simulates.
+ */
+const handleDeployPreview: JobHandler = async (ctx, job) => {
+  const project = ctx.store.siteProjects.get(job.payload.siteProjectId as string);
+  if (!project) throw new Error(`SiteProject ${job.payload.siteProjectId} not found`);
+  const lead = ctx.store.leads.get(project.leadId);
+  const company = lead ? ctx.store.companies.get(lead.companyId) : null;
+  const sourcePath = project.buildPath ?? (project.previewPath ? dirname(project.previewPath) : null);
+  if (!sourcePath) throw new Error("Preview deploy blocked: project has no build or preview artifact");
+
+  const vercelCred = ctx.store.credentialStatuses.findByKey("integration:vercel")[0] ?? null;
+  const ticket = operationalTicket(
+    ctx,
+    "vercel.deployPreview",
+    { type: "SiteProject", id: project.id, leadId: project.leadId },
+    job.traceId,
+    vercelCred ? { mode: vercelCred.mode } : null,
+  );
+  const result = await ctx.integrations.vercel.deploy(ticket, {
+    target: "preview",
+    projectName: deployProjectName(company?.name ?? project.leadId),
+    sourcePath,
+  });
+  recordDeployment(ctx, project, "preview", result, null);
+  if (result.ok && result.url) {
+    ctx.store.siteProjects.save({ ...project, previewUrl: result.url, updatedAt: nowIso() });
+  }
+  ctx.store.writeActivity(
+    project.leadId,
+    "preview_deployed",
+    result.dryRun
+      ? `Preview deploy SIMULATED (dry-run): ${result.detail ?? ""}`
+      : result.ok
+        ? `Preview deployed: ${result.url ?? "(url pending)"}`
+        : `Preview deploy FAILED: ${result.detail ?? "unknown"}`,
+    { traceId: job.traceId },
+  );
+};
+
 const handleBillingDraft: JobHandler = async (ctx, job) => {
   const lead = getLead(ctx, job);
   const draft = createInvoiceDraft({
@@ -876,6 +916,34 @@ const handleBillingExecute: JobHandler = async (ctx, job) => {
   ctx.store.writeActivity(draft.leadId, "billing_executed", `${executed.status}: ${executed.url ?? executed.stripeObjectId ?? ""}`, { traceId: job.traceId, byApproval: true });
 };
 
+/**
+ * Owner-provided transcript/notes → durable lessons. The text is DATA
+ * (invariant 1): it is scanned for insights and stored, never executed and
+ * never placed in a prompt as instructions.
+ */
+const handleTranscriptIngest: JobHandler = async (ctx, job) => {
+  const source = String(job.payload.source ?? "unknown");
+  const text = String(job.payload.text ?? "");
+  const insights = await ctx.integrations.transcripts.extractInsights({ source, text });
+
+  const validTopics = new Set(["outreach", "auditing", "templates", "design", "pricing", "process", "integration", "other"] as const);
+  for (const insight of insights) {
+    const topic = (validTopics.has(insight.topic as never) ? insight.topic : "other") as Parameters<typeof ctx.memory.addLesson>[0]["topic"];
+    ctx.memory.addLesson({ topic, lesson: insight.insight, evidence: [`transcript:${source}`] });
+  }
+  ctx.store.writeAudit({
+    traceId: job.traceId,
+    actor: "system",
+    action: "transcript.ingested",
+    subjectType: "Transcript",
+    subjectId: source,
+    leadId: null,
+    gate: null,
+    outcome: "recorded",
+    detail: `${insights.length} insight(s) from ${source} (${text.length} chars)${insights.length === 0 ? " — nothing matched; lessons need full sentences about design/layout/conversion" : ""}`,
+  });
+};
+
 export const JOB_HANDLERS: Record<string, JobHandler> = {
   "lead.audit": handleAudit,
   "lead.score": handleScore,
@@ -888,6 +956,8 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   "preview.build": handlePreviewBuild,
   "site.revise": handleSiteRevise,
   "deploy.production": handleDeployProduction,
+  "deploy.preview": handleDeployPreview,
   "billing.draft": handleBillingDraft,
   "billing.execute": handleBillingExecute,
+  "ingest.transcript": handleTranscriptIngest,
 };

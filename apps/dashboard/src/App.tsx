@@ -6,6 +6,7 @@ import { ReviewQueue } from "./pages/ReviewQueue";
 import { LeadsPage } from "./pages/LeadsPage";
 import { LeadDetail } from "./pages/LeadDetail";
 import { Policies } from "./pages/Policies";
+import { Experiments } from "./pages/Experiments";
 import { CollectionPage, type Section } from "./pages/CollectionPage";
 
 interface NavEntry {
@@ -43,10 +44,7 @@ const NAV: NavEntry[] = [
     { title: "Daily Memory", collection: "daily-memories", columns: ["date", "summary"] },
     { title: "Durable Lessons", collection: "lessons", columns: ["topic", "lesson", "confidence", "timesConfirmed"] },
   ] },
-  { path: "/experiments", label: "Experiments", sections: [
-    { title: "Experiments", collection: "experiments", columns: ["name", "dimension", "status", "hypothesis"] },
-    { title: "Results", collection: "experiment-results", columns: ["experimentId", "variant", "metric", "value", "sampleSize"] },
-  ] },
+  { path: "/experiments", label: "Experiments" },
   { path: "/failures", label: "Failures / Logs", sections: [
     { title: "Failures", collection: "failures", columns: ["category", "message", "leadId", "retryable"] },
     { title: "Audit Log (every sensitive action)", collection: "audit-log", columns: ["actor", "action", "outcome", "detail"] },
@@ -133,6 +131,7 @@ export function App() {
           <Route path="/leads" element={<LeadsPage />} />
           <Route path="/leads/:id" element={<LeadDetail />} />
           <Route path="/policies" element={<Policies />} />
+          <Route path="/experiments" element={<Experiments />} />
           {NAV.filter((n) => n.sections).map((n) => (
             <Route key={n.path} path={n.path} element={<CollectionPage title={n.label} sections={n.sections!} />} />
           ))}

@@ -30,6 +30,14 @@ export interface DraftInput {
 }
 
 /**
+ * First-touch copy variants the experiment engine may assign. v1 is the
+ * default; every variant must satisfy validateDraft (opt-out line, Cornell
+ * mention, mockup offer, length caps). The "already built a free mockup"
+ * claim is owner-specified wording (compliance advisory B1) — keep verbatim.
+ */
+export const FIRST_TOUCH_VARIANTS = ["v1-cornell-mockup", "v2-finding-first"] as const;
+
+/**
  * Personalized, truthful first-touch draft. Rules (per owner spec):
  * short, niche-aware, mentions being a Cornell student, cites REAL audit
  * findings only, offers an already-built free mockup, includes the opt-out
@@ -41,6 +49,12 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
   const greeting = firstName ? `Hi ${firstName},` : `Hi there,`;
   const hook = NICHE_HOOKS[lead.niche] ?? NICHE_HOOKS.other!;
 
+  const requested = input.variant ?? FIRST_TOUCH_VARIANTS[0];
+  // Unknown variant must never kill the pipeline mid-draft: fall back to v1.
+  const variant = (FIRST_TOUCH_VARIANTS as readonly string[]).includes(requested)
+    ? requested
+    : FIRST_TOUCH_VARIANTS[0];
+
   // Only claim what the audit actually found.
   const angles = audit.outreachAngles.slice(0, 2);
   const findingLine =
@@ -48,25 +62,40 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
       ? `I took a look at ${audit.hasWebsite ? `your site (${lead.domain})` : `your online presence`} and noticed ${formatAngles(angles)}.`
       : `I took a quick look at how ${company.name} shows up online and think there's real room to win more customers.`;
 
-  const subject = audit.hasWebsite
-    ? `quick idea for ${company.name}'s website`
-    : `a website idea for ${company.name}`;
+  const mockupOffer = `I've already built a free mockup of what a faster, mobile-friendly site for ${company.name} could look like — happy to send it over, no strings attached. If you like it, great; if not, you keep the ideas.`;
+  const signOff = [`Worth a look?`, "", `Best,`, `Will`, `williamdamato.com`, "", OPT_OUT_LINE];
 
-  const body = [
-    greeting,
-    "",
-    `I'm Will — a Cornell student, and ${hook}. ${findingLine}`,
-    "",
-    `I've already built a free mockup of what a faster, mobile-friendly site for ${company.name} could look like — happy to send it over, no strings attached. If you like it, great; if not, you keep the ideas.`,
-    "",
-    `Worth a look?`,
-    "",
-    `Best,`,
-    `Will`,
-    `williamdamato.com`,
-    "",
-    OPT_OUT_LINE,
-  ].join("\n");
+  let subject: string;
+  let body: string;
+  if (variant === "v2-finding-first") {
+    // Finding-led: the observation opens, the introduction follows.
+    const proposed = audit.hasWebsite
+      ? `noticed something on ${company.name}'s site`
+      : `a quick website idea for ${company.name}`;
+    subject = proposed.length <= 70 ? proposed : audit.hasWebsite ? "noticed something on your site" : "a quick website idea";
+    body = [
+      greeting,
+      "",
+      findingLine,
+      "",
+      `I'm Will — a Cornell student, and ${hook}. ${mockupOffer}`,
+      "",
+      ...signOff,
+    ].join("\n");
+  } else {
+    subject = audit.hasWebsite
+      ? `quick idea for ${company.name}'s website`
+      : `a website idea for ${company.name}`;
+    body = [
+      greeting,
+      "",
+      `I'm Will — a Cornell student, and ${hook}. ${findingLine}`,
+      "",
+      mockupOffer,
+      "",
+      ...signOff,
+    ].join("\n");
+  }
 
   const now = nowIso();
   return {
@@ -75,12 +104,13 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
     updatedAt: now,
     leadId: lead.id,
     contactId: contact.id,
-    variant: input.variant ?? "v1-cornell-mockup",
+    variant,
     subject,
     body,
     personalizationNotes: [
       `niche hook: ${lead.niche}`,
       ...(firstName ? [`greeted by first name (${firstName})`] : ["no contact name available — generic greeting"]),
+      ...(variant !== requested ? [`unknown variant "${requested}" requested — fell back to ${variant}`] : []),
     ],
     auditFindingsUsed: angles,
     status: "draft",

@@ -106,12 +106,18 @@ export function evaluateGate(
   });
 }
 
-/** Operational (ungated) ticket for read-only/preview external calls. */
+/**
+ * Operational (ungated) ticket for read-only/preview external calls.
+ * Pass a credential only for actions that should execute for real outside
+ * local (e.g. owner-triggered preview deploys); without one the engine
+ * forces dry-run in every env.
+ */
 export function operationalTicket(
   ctx: AppContext,
   action: string,
   subject: { type: string; id: string; leadId?: string | null },
   traceId: string,
+  credential: { mode: "missing" | "sandbox" | "live" } | null = null,
 ) {
   return ctx.engine.authorizeOperational({
     action,
@@ -121,6 +127,6 @@ export function operationalTicket(
     traceId,
     env: ctx.config.env,
     configDryRun: ctx.config.dryRun,
-    credential: null,
+    credential,
   });
 }

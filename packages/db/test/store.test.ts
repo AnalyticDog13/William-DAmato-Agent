@@ -43,6 +43,60 @@ describe("Store repositories", () => {
     expect(store.leads.list({ search: "espresso" })).toHaveLength(1);
   });
 
+  it("round-trips weekly reports keyed by weekStart", () => {
+    const store = new Store(openMemoryDatabase());
+    const now = nowIso();
+    store.weeklyReports.insert({
+      id: newId("wrep"),
+      createdAt: now,
+      updatedAt: now,
+      weekStart: "2026-06-08",
+      weekEnd: "2026-06-14",
+      summary: "First full week",
+      metrics: { leadsTotal: 3 },
+      wins: ["1 positive reply"],
+      bottlenecks: [],
+      lessons: [],
+      experimentFindings: [],
+      reportText: "# Weekly",
+    });
+    expect(store.weeklyReports.list({ skey: "2026-06-08" })).toHaveLength(1);
+    expect(store.weeklyReports.list({ skey: "2026-06-01" })).toHaveLength(0);
+    expect(() =>
+      store.weeklyReports.insert({
+        id: newId("wrep"),
+        createdAt: now,
+        updatedAt: now,
+        weekStart: "not-a-date",
+        weekEnd: "2026-06-14",
+        summary: "",
+        metrics: {},
+        wins: [],
+        bottlenecks: [],
+        lessons: [],
+        experimentFindings: [],
+        reportText: "",
+      }),
+    ).toThrow();
+  });
+
+  it("accepts the design lesson topic (transcript ingestion target)", () => {
+    const store = new Store(openMemoryDatabase());
+    const now = nowIso();
+    const lesson = store.lessons.insert({
+      id: newId("les"),
+      createdAt: now,
+      updatedAt: now,
+      topic: "design",
+      lesson: "Hero sections convert better with a single CTA",
+      evidence: ["transcript:design-review.txt"],
+      confidence: 0.5,
+      timesConfirmed: 1,
+      supersededBy: null,
+    });
+    expect(store.lessons.get(lesson.id)?.topic).toBe("design");
+  });
+
   it("gate policies default to approval mode", () => {
     const store = new Store(openMemoryDatabase());
     expect(store.getGatePolicy("SEND_FIRST_TOUCH").mode).toBe("approval");

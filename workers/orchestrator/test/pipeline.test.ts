@@ -10,6 +10,7 @@ import {
   runUntilEmpty,
   seedDemoData,
   generateDailyReport,
+  generateWeeklyReport,
   type AppContext,
 } from "../src/index";
 
@@ -386,5 +387,150 @@ describe("lead pipeline (dry run, mocks)", () => {
     expect(memory.metrics.leadsTotal).toBeGreaterThan(0);
     expect(reportText).toMatch(/Daily Report/);
     expect(ctx.store.ownerRequests.count({ status: "open" })).toBeGreaterThan(0);
+  });
+});
+
+describe("owner-triggered preview deploys (phase E, advisory D4)", () => {
+  async function buildProject(name: string) {
+    ingestLead(ctx, lead(name, `https://${name.toLowerCase().replace(/\s+/g, "-")}.example.com`));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+    ctx.store.queue.enqueue({ type: "preview.build", payload: { leadId: l.id }, traceId: newTraceId(), leadId: l.id });
+    await runUntilEmpty(ctx, 100, futureClock);
+    return ctx.store.siteProjects.list({ leadId: l.id })[0]!;
+  }
+
+  function vercelSandboxCredential() {
+    const cred = ctx.store.credentialStatuses.findByKey("integration:vercel")[0];
+    if (cred) {
+      ctx.store.credentialStatuses.save({ ...cred, mode: "sandbox" });
+    } else {
+      const now = nowIso();
+      ctx.store.credentialStatuses.insert({
+        id: newId("cred"), createdAt: now, updatedAt: now,
+        integration: "vercel", mode: "sandbox", healthy: null, lastCheckedAt: null, detail: "test",
+      });
+    }
+  }
+
+  it("preview build NEVER deploys on its own, even with a vercel credential", async () => {
+    vercelSandboxCredential();
+    const project = await buildProject("No Auto Deploy Barbers");
+    expect(project).toBeDefined();
+    expect(ctx.store.deployments.count()).toBe(0);
+  });
+
+  it("the deploy.preview job records a dry-run preview deployment (local is always dry-run)", async () => {
+    vercelSandboxCredential();
+    const project = await buildProject("Manual Preview Barbers");
+    ctx.store.queue.enqueue({ type: "deploy.preview", payload: { siteProjectId: project.id }, traceId: newTraceId(), leadId: project.leadId });
+    await runUntilEmpty(ctx, 50, futureClock);
+    const deployment = ctx.store.deployments.list()[0]!;
+    expect(deployment).toBeDefined();
+    expect(deployment.target).toBe("preview");
+    expect(deployment.status).toBe("dry_run");
+    expect(ctx.store.queue.list({ status: "dead" })).toHaveLength(0);
+  });
+});
+
+describe("transcript ingestion", () => {
+  it("extracts insights into durable lessons with the source as evidence", async () => {
+    ctx.store.queue.enqueue({
+      type: "ingest.transcript",
+      payload: {
+        source: "design-review-call.txt",
+        text: [
+          "random chit chat",
+          "The hero section needs a single clear CTA above the fold to convert visitors.",
+          "Mobile layout breaks at 360px — fix the nav font scaling for phones.",
+        ].join("\n"),
+      },
+      traceId: newTraceId(),
+    });
+    await runUntilEmpty(ctx, 50, futureClock);
+
+    const lessons = ctx.store.lessons.list({ skey: "design" });
+    expect(lessons.length).toBe(2);
+    expect(lessons[0]!.evidence.join()).toContain("design-review-call.txt");
+    expect(ctx.store.queue.list({ status: "dead" })).toHaveLength(0);
+  });
+
+  it("zero insights is recorded, not an error", async () => {
+    ctx.store.queue.enqueue({
+      type: "ingest.transcript",
+      payload: { source: "smalltalk.txt", text: "hi\nok\nbye" },
+      traceId: newTraceId(),
+    });
+    await runUntilEmpty(ctx, 50, futureClock);
+    expect(ctx.store.lessons.count()).toBe(0);
+    expect(ctx.store.queue.list({ status: "dead" })).toHaveLength(0);
+    const audit = ctx.store.auditLog.list({ limit: 20 }).find((a) => a.action === "transcript.ingested");
+    expect(audit).toBeDefined();
+    expect(audit!.detail).toContain("0 insight");
+  });
+});
+
+describe("weekly report", () => {
+  function insertExperimentWithTraffic(sendsPerVariant: number) {
+    const now = nowIso();
+    const experiment = ctx.store.experiments.insert({
+      id: newId("exp"),
+      createdAt: now,
+      updatedAt: now,
+      name: "copy A/B",
+      hypothesis: "v2 wins",
+      dimension: "outreach_variant" as const,
+      variants: ["v1-cornell-mockup", "v2-finding-first"],
+      status: "running" as const,
+      conclusion: "",
+    });
+    let n = 0;
+    for (const variant of experiment.variants) {
+      for (let i = 0; i < sendsPerVariant; i++) {
+        const leadId = `lead_w${n++}`;
+        ctx.store.outreachDrafts.insert({
+          id: newId("odft"), createdAt: now, updatedAt: now, leadId, contactId: newId("con"),
+          variant, subject: "s", body: "b", personalizationNotes: [], auditFindingsUsed: [],
+          status: "sent_dry_run" as const, approvalRequestId: null, sentAt: now, traceId: "trc",
+        });
+        // v2 replies twice as often: every 2nd lead vs every 4th.
+        const replyEvery = variant === "v2-finding-first" ? 2 : 4;
+        if (i % replyEvery === 0) {
+          ctx.store.replyEvents.insert({
+            id: newId("rply"), createdAt: now, updatedAt: now, leadId, contactId: null,
+            provider: "manual" as const, externalMessageId: null, receivedAt: now,
+            intent: "positive" as const, intentConfidence: 0.9, bodyExcerpt: "", threadSummary: "",
+            recommendedNextStep: "", ownerNotifiedAt: null, followUpsPaused: false,
+          });
+        }
+      }
+    }
+    return experiment;
+  }
+
+  it("rolls up the week, includes experiment findings, and upserts by weekStart", () => {
+    insertExperimentWithTraffic(10);
+    const { report, reportText } = generateWeeklyReport(ctx, "2026-06-14");
+    expect(report.weekStart).toBe("2026-06-08");
+    expect(report.weekEnd).toBe("2026-06-14");
+    expect(reportText).toMatch(/Weekly Report/);
+    expect(report.experimentFindings.join()).toContain("copy A/B");
+    // Re-run replaces, never duplicates.
+    generateWeeklyReport(ctx, "2026-06-14");
+    expect(ctx.store.weeklyReports.list({ skey: "2026-06-08" })).toHaveLength(1);
+  });
+
+  it("derives an outreach lesson only once every variant has enough sends", () => {
+    insertExperimentWithTraffic(9);
+    generateWeeklyReport(ctx, "2026-06-14");
+    expect(ctx.store.lessons.list({ skey: "outreach" })).toHaveLength(0);
+
+    ctx = createContext({ inMemory: true, silent: true });
+    insertExperimentWithTraffic(10);
+    const { report } = generateWeeklyReport(ctx, "2026-06-14");
+    const lessons = ctx.store.lessons.list({ skey: "outreach" });
+    expect(lessons).toHaveLength(1);
+    expect(lessons[0]!.lesson).toContain("v2-finding-first");
+    expect(report.lessons.join()).toContain("v2-finding-first");
   });
 });

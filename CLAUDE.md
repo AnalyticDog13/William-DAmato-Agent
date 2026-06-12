@@ -140,8 +140,8 @@ updated alongside this section after every phase or significant feature.
   quality check) → DEPLOY_PRODUCTION approval → decide route enqueues
   `deploy.production` → handler re-checks quality, `evaluateGate`, Vercel
   deploy (dry_run in local, always), DeploymentRecord + status live/failed.
-  Preview deploys ride `operationalTicket` (currently dry-run in EVERY env —
-  see TODO(phase-e) in pipelines.ts before changing).
+  Preview deploys ride `operationalTicket` (made owner-triggered with
+  credential pass-through in Phase E — advisory D4 resolved).
 - Vercel adapter uploads directories recursively (skips dotfiles/symlinks/
   node_modules, errors on >200 files, vite projectSettings when package.json).
 - Dashboard LeadDetail: revision form, request-deploy button, revisions +
@@ -157,8 +157,8 @@ updated alongside this section after every phase or significant feature.
   `evaluateFollowUp` (status still `contacted`, tier, real angle, valid email,
   no decisive reply — auto_reply doesn't count, ≤ `MAX_TOUCHES`=3 total).
   Idempotent (same-sequence draft dedupe) + send-time cap re-check. Each
-  follow-up needs its own SEND_FIRST_TOUCH approval (shared gate, TODO(phase-e)
-  whether it gets its own).
+  follow-up needs its own SEND_FIRST_TOUCH approval (shared gate — DECIDED in
+  Phase E: stays shared; same risk class, per-draft approval).
 - `outreach.close` job (+14d after every send): silence after the last touch →
   lead status `not_interested` (new LeadStatus). Negative replies also set
   `not_interested` — any no/unsubscribe/bounce stops forever.
@@ -167,10 +167,40 @@ updated alongside this section after every phase or significant feature.
   can never become the main job. Compliance delta review 7/7 PASS (advisory
   B1: "already built a mockup" copy claim is owner-specified, kept verbatim).
 
-### NEXT: Phase E (start here)
+### Done (Phase E — experiments, weekly reports, ingestion, 132 tests green)
 
-Goal: experiment engine, weekly reports, transcript/design-reference
-ingestion (adapter interface exists, mock only). Deferred into here:
-Instantly pauseLead endpoint verification, LLM-assisted reply classification
-(`workers/outreach/src/classify.ts`), operational-ticket credentials +
-owner-triggered preview deploys (TODO(phase-e) in pipelines.ts).
+- Experiment engine (`workers/orchestrator/src/experiments.ts`): deterministic
+  per-lead variant assignment (FNV-1a; `OutreachDraft.variant` IS the
+  assignment record), results joined from sent drafts × replies (auto_reply
+  excluded), upserted per experiment+variant+metric. handleDraft assigns from
+  the running `outreach_variant` experiment; every draft still owner-approved.
+- First-touch copy registry (`FIRST_TOUCH_VARIANTS` in draft.ts): v1 unchanged,
+  new `v2-finding-first` (finding-led; same B1 mockup claim verbatim + opt-out
+  line via shared constants; unknown variants fall back to v1, never throw).
+- Experiments API (`POST /api/experiments` validates variants against the
+  registry, `/:id/compute`, `/:id/conclude`) + dedicated dashboard page
+  (create/recompute/conclude). Demo seeds one running copy experiment.
+- Weekly reports: `WeeklyReport` schema/repo/whitelist (`weekly-reports`),
+  `generateWeeklyReport` (7-day rollup, experiment findings, DurableLesson
+  derivation: variant leader needs ≥10 sends/arm, failure category ≥5/week),
+  Monday rollover in main.ts, `GET /api/reports/weekly`.
+- Transcript ingestion: `POST /api/transcripts` → `ingest.transcript` job →
+  `extractInsights` → lessons (new "design" topic; evidence
+  `transcript:<source>`). Text is DATA — never executed (invariant 1).
+- Preview deploys are owner-triggered only (advisory D4 resolved):
+  auto-deploy removed from handlePreviewBuild; `POST /api/site-projects/:id/
+  deploy-preview` → `deploy.preview` job; `operationalTicket` passes the
+  vercel credential through (engine unchanged — local stays dry-run, tested).
+- Compliance review 7/7 PASS. Advisory: when the transcript extractor becomes
+  LLM-backed, it must return through compliance review (text enters a prompt).
+
+### NEXT: Phase F (start here)
+
+Everything left is credential-gated or LLM-gated: activate real adapters as
+the 7 OwnerRequests get fulfilled (Stripe test mode + Vercel token first;
+verify Instantly pauseLead + Vercel `framework:"vite"` assumptions with real
+keys); LLM-assisted features behind an adapter (reply classification in
+classify.ts, transcript insight extraction, free-text revision interpretation
+— all strictly quoted-material-to-label, never instructions; compliance
+review required); real lead sourcing (Google Places) when the key arrives;
+staging rehearsal (`WILLIAM_ENV=staging` + sandbox creds + granted approvals).

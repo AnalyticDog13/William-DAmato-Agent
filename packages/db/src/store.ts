@@ -30,6 +30,7 @@ import {
   UnsubscribeRecord,
   WebhookEventRecord,
   WebsiteAudit,
+  WeeklyReport,
   newId,
   nowIso,
 } from "@william/core";
@@ -72,6 +73,7 @@ export class Store {
   readonly experiments: Repository<Experiment>;
   readonly experimentResults: Repository<ExperimentResult>;
   readonly dailyMemories: Repository<DailyMemory>;
+  readonly weeklyReports: Repository<WeeklyReport>;
   readonly lessons: Repository<DurableLesson>;
   readonly ownerRequests: Repository<OwnerRequest>;
   readonly credentialStatuses: Repository<IntegrationCredentialStatus>;
@@ -220,6 +222,11 @@ export class Store {
       collection: "daily_memories",
       schema: DailyMemory,
       skey: (m) => m.date,
+    });
+    this.weeklyReports = repo<WeeklyReport>({
+      collection: "weekly_reports",
+      schema: WeeklyReport,
+      skey: (r) => r.weekStart,
     });
     this.lessons = repo<DurableLesson>({
       collection: "durable_lessons",

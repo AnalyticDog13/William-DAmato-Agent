@@ -10,6 +10,7 @@
     "@william/integrations": "*",
     "@william/memory": "*",
     "@william/worker-orchestrator": "*",
+    "@william/worker-outreach": "*",
     "express": "^5.1.0"
   },
   "devDependencies": {

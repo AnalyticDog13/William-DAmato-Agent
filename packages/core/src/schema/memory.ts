@@ -57,8 +57,22 @@ export const DailyMemory = BaseEntity.extend({
 });
 export type DailyMemory = z.infer<typeof DailyMemory>;
 
+/** Weekly rollup of daily memories + experiment findings; one per weekStart. */
+export const WeeklyReport = BaseEntity.extend({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  summary: z.string(),
+  metrics: z.record(z.number()).default({}),
+  wins: z.array(z.string()).default([]),
+  bottlenecks: z.array(z.string()).default([]),
+  lessons: z.array(z.string()).default([]),
+  experimentFindings: z.array(z.string()).default([]),
+  reportText: z.string().default(""),
+});
+export type WeeklyReport = z.infer<typeof WeeklyReport>;
+
 export const DurableLesson = BaseEntity.extend({
-  topic: z.enum(["outreach", "auditing", "templates", "pricing", "process", "integration", "other"]),
+  topic: z.enum(["outreach", "auditing", "templates", "design", "pricing", "process", "integration", "other"]),
   lesson: z.string(),
   evidence: z.array(z.string()).default([]),
   confidence: z.number().min(0).max(1).default(0.5),

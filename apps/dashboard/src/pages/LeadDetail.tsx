@@ -92,6 +92,19 @@ function SiteProjectActions({ t, onChanged }: { t: Timeline; onChanged: () => vo
     }
   };
 
+  const deployPreview = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/site-projects/${project.id}/deploy-preview`, { method: "POST" });
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "preview deploy failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="panel">
       <h3>Site project — revisions &amp; deploy</h3>
@@ -111,6 +124,9 @@ function SiteProjectActions({ t, onChanged }: { t: Timeline; onChanged: () => vo
         ))}
         <div style={{ display: "flex", gap: 8 }}>
           <button disabled={busy} onClick={submitRevision}>Submit revision</button>
+          <button disabled={busy} onClick={deployPreview} title="Deploys the preview artifact only (simulated until Vercel credentials exist; production has its own approval)">
+            Deploy preview
+          </button>
           <button disabled={busy || qualityFailed} onClick={requestDeploy} title={qualityFailed ? "Preview failed its quality check — revise first" : "Creates a DEPLOY_PRODUCTION approval for you to grant in the review queue"}>
             Request production deploy
           </button>

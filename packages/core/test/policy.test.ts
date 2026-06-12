@@ -49,6 +49,28 @@ function policy(mode: GatePolicy["mode"], gate: GatePolicy["gate"] = "SEND_FIRST
   return { gate, mode, note: "", updatedAt: nowIso() };
 }
 
+describe("authorizeOperational — credential controls live execution (preview deploys)", () => {
+  const op = (overrides: Record<string, unknown> = {}) =>
+    engine.authorizeOperational({
+      action: "vercel.deployPreview",
+      subjectType: "SiteProject",
+      subjectId: "sp_1",
+      traceId: "trc_test",
+      env: "staging",
+      configDryRun: false,
+      credential: null,
+      ...overrides,
+    });
+
+  it("stays dry-run without a credential; sandbox credential goes live in staging only", () => {
+    expect(op().dryRun).toBe(true); // no credential → simulate
+    expect(op({ credential: { mode: "sandbox" } }).dryRun).toBe(false);
+    expect(op({ env: "local", credential: { mode: "sandbox" } }).dryRun).toBe(true); // local always dry-run
+    expect(op({ env: "production", credential: { mode: "sandbox" } }).dryRun).toBe(true); // prod needs live
+    expect(op({ env: "production", credential: { mode: "live" } }).dryRun).toBe(false);
+  });
+});
+
 describe("PolicyEngine — dangerous actions are blocked without approval", () => {
   it("denies when no approval exists (default approval mode)", () => {
     const d = engine.evaluate(baseInput());
