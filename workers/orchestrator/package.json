@@ -1,0 +1,19 @@
+{
+  "name": "@william/worker-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@william/core": "*",
+    "@william/db": "*",
+    "@william/integrations": "*",
+    "@william/memory": "*",
+    "@william/templates": "*",
+    "@william/worker-billing": "*",
+    "@william/worker-outreach": "*",
+    "@william/worker-scheduling": "*",
+    "@william/worker-site-auditor": "*",
+    "@william/worker-site-builder": "*"
+  }
+}

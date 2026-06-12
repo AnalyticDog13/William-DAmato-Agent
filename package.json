@@ -1,0 +1,32 @@
+{
+  "name": "william-damato-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "William D'Amato — agentic sales-and-delivery platform for winning website clients, with strict owner-approval gates.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "workspaces": [
+    "packages/*",
+    "workers/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "tsx workers/orchestrator/src/demo.ts",
+    "worker": "tsx workers/orchestrator/src/main.ts",
+    "dev:api": "tsx watch apps/api/src/main.ts",
+    "dev:dashboard": "npm run dev --workspace apps/dashboard",
+    "build:dashboard": "npm run build --workspace apps/dashboard",
+    "seed": "tsx workers/orchestrator/src/seed.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
