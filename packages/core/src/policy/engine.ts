@@ -12,7 +12,8 @@ import { GATE_DEFINITIONS } from "./gates";
  */
 export interface PolicyTicket {
   readonly __policyTicket: true;
-  readonly gate: PolicyGateName;
+  /** Named high-risk gate, or "OPERATIONAL" for ungated-but-audited side effects. */
+  readonly gate: PolicyGateName | "OPERATIONAL";
   readonly subjectType: string;
   readonly subjectId: string;
   readonly traceId: string;
@@ -97,6 +98,40 @@ export class PolicyEngine {
       detail: `${decision.reasonCode}: ${decision.reason}`,
     });
     return decision;
+  }
+
+  /**
+   * Authorizes a non-gated external side effect (preview deploy, enrichment
+   * lookup, crawl, screenshot). Always allowed, but dry-run rules and audit
+   * logging still apply — adapters accept ONLY tickets, so every external
+   * call passes through here or through a named gate.
+   */
+  authorizeOperational(input: Omit<PolicyEvaluationInput, "gate" | "policy" | "autonomyPolicy" | "approval"> & {
+    action: string;
+  }): PolicyTicket {
+    const dryRun = this.computeDryRun({ ...input, gate: "SEND_FIRST_TOUCH" } as PolicyEvaluationInput);
+    const ticket: PolicyTicket = {
+      __policyTicket: true,
+      gate: "OPERATIONAL",
+      subjectType: input.subjectType,
+      subjectId: input.subjectId,
+      traceId: input.traceId,
+      dryRun,
+      issuedAt: nowIso(),
+      nonce: newId("tkt"),
+    };
+    this.auditSink({
+      traceId: input.traceId,
+      actor: "system",
+      action: `policy.operational:${input.action}`,
+      subjectType: input.subjectType,
+      subjectId: input.subjectId,
+      leadId: input.leadId ?? null,
+      gate: null,
+      outcome: dryRun ? "dry_run" : "allowed",
+      detail: input.action,
+    });
+    return ticket;
   }
 
   private decide(
