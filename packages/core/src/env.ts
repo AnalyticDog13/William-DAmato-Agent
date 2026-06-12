@@ -10,6 +10,10 @@ export interface RuntimeConfig {
   dashboardOrigin: string;
   ownerApiToken: string | undefined;
   auditorMode: "mock" | "http" | "playwright";
+  /** Site-builder output: static single-file preview only, or + React/Framer Motion project. */
+  stackMode: "static" | "react";
+  /** Minimum Lighthouse scores a generated preview must hit before owner review. */
+  previewQuality: { minPerformance: number; minAccessibility: number };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -20,6 +24,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   // SAFETY: local can never run live side effects, regardless of DRY_RUN.
   const dryRun = williamEnv === "local" ? true : env.DRY_RUN !== "false";
   const auditorMode = (env.AUDITOR_MODE ?? "mock") as RuntimeConfig["auditorMode"];
+  const stackMode = env.STACK_MODE === "react" ? "react" : "static";
+  const threshold = (raw: string | undefined, fallback: number): number => {
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 && n <= 100 ? n : fallback;
+  };
   return {
     env: williamEnv,
     dryRun,
@@ -29,5 +38,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     dashboardOrigin: env.DASHBOARD_ORIGIN ?? "http://localhost:5173",
     ownerApiToken: env.OWNER_API_TOKEN || undefined,
     auditorMode: ["mock", "http", "playwright"].includes(auditorMode) ? auditorMode : "mock",
+    stackMode,
+    previewQuality: {
+      minPerformance: threshold(env.PREVIEW_MIN_PERFORMANCE, 70),
+      minAccessibility: threshold(env.PREVIEW_MIN_ACCESSIBILITY, 80),
+    },
   };
 }

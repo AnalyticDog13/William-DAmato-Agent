@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   newId,
   nowIso,
@@ -10,10 +10,13 @@ import {
 } from "@william/core";
 import {
   DESIGN_PRINCIPLES,
+  getTemplateById,
   referencesFor,
   renderPreviewSite,
+  renderReactProject,
   selectTemplate,
   type CompanyData,
+  type TemplateDefinition,
 } from "@william/templates";
 
 export interface BuildInput {
@@ -22,14 +25,17 @@ export interface BuildInput {
   audit: WebsiteAudit | null;
   dataDir: string;
   opportunityId?: string | null;
+  /** "react" additionally emits a Vite+React+Framer Motion project (deploy artifact). */
+  stackMode?: "static" | "react";
 }
 
 /**
  * Generates a preview site from the best-matching starter kit and the
  * company's public data. Output is written locally; the owner reviews it in
  * the dashboard (side-by-side with the audit) BEFORE anything customer-facing.
- * Phase D: React + Framer Motion full builds (STACK_MODE=react) + Vercel
- * preview deploys replace the static single-file artifact.
+ * The static single-file preview is ALWAYS written (review + quality check
+ * need no toolchain); STACK_MODE=react additionally emits the Vite+React+
+ * Framer Motion project that production deploys upload.
  */
 export function buildPreviewSite(input: BuildInput): SiteProject {
   const { lead, company, audit } = input;
@@ -56,6 +62,9 @@ export function buildPreviewSite(input: BuildInput): SiteProject {
   const previewPath = join(dir, "index.html");
   writeFileSync(previewPath, html, "utf8");
 
+  const stack = input.stackMode ?? "static";
+  const buildPath = stack === "react" ? writeReactBuild(selection.template, companyData, input.dataDir, lead.id) : null;
+
   const designRefs = referencesFor(refQueryFor(lead.niche));
   const missingInputs = computeMissingInputs(companyData);
   const now = nowIso();
@@ -70,6 +79,8 @@ export function buildPreviewSite(input: BuildInput): SiteProject {
     status: missingInputs.length > 2 ? "gathering_inputs" : "preview_ready",
     previewUrl: null, // set by deployment pipeline after Vercel preview deploy
     previewPath,
+    stack,
+    buildPath,
     screenshotPaths: [], // populated by the playwright quality check in the orchestrator
     qualityCheck: null,
     rationale: [
@@ -83,6 +94,83 @@ export function buildPreviewSite(input: BuildInput): SiteProject {
       .join("\n"),
     companyData: companyData as unknown as Record<string, unknown>,
     missingInputs,
+  };
+}
+
+function writeReactBuild(template: TemplateDefinition, data: CompanyData, dataDir: string, leadId: string): string {
+  const buildDir = join(dataDir, "builds", leadId);
+  for (const f of renderReactProject(template, data)) {
+    const path = join(buildDir, f.file);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, f.data, "utf8");
+  }
+  return buildDir;
+}
+
+/** Fields a revision may change. Free text alone can't be applied (no LLM yet — TODO(phase-e)). */
+export const REVISABLE_FIELDS = [
+  "tagline",
+  "description",
+  "phone",
+  "email",
+  "address",
+  "city",
+  "hours",
+  "services",
+  "trustSignals",
+] as const;
+
+export interface RevisionResult {
+  project: SiteProject;
+  /** Which override fields were recognized and applied. Empty = nothing applicable. */
+  applied: string[];
+}
+
+/**
+ * Applies structured overrides to an existing project and re-renders its
+ * artifacts in place (preview always; react build when stack === "react").
+ * Unknown or wrongly-typed fields are ignored, not guessed.
+ */
+export function applyRevisionOverrides(
+  project: SiteProject,
+  overrides: Record<string, unknown>,
+  dataDir: string,
+): RevisionResult {
+  const applied: string[] = [];
+  const companyData = { ...(project.companyData as unknown as CompanyData) };
+  for (const field of REVISABLE_FIELDS) {
+    const value = overrides[field];
+    if (value === undefined) continue;
+    if (field === "services" || field === "trustSignals") {
+      if (Array.isArray(value) && value.every((v) => typeof v === "string")) {
+        companyData[field] = value as string[];
+        applied.push(field);
+      }
+    } else if (typeof value === "string" && value.trim()) {
+      companyData[field] = value.trim();
+      applied.push(field);
+    }
+  }
+  if (applied.length === 0) return { project, applied };
+
+  const template = getTemplateById(project.templateId) ?? selectTemplate(project.niche).template;
+  const previewPath = project.previewPath ?? join(dataDir, "previews", project.leadId, "index.html");
+  mkdirSync(dirname(previewPath), { recursive: true });
+  writeFileSync(previewPath, renderPreviewSite(template, companyData), "utf8");
+  const buildPath =
+    project.stack === "react" ? writeReactBuild(template, companyData, dataDir, project.leadId) : project.buildPath;
+
+  return {
+    project: {
+      ...project,
+      previewPath,
+      buildPath,
+      companyData: companyData as unknown as Record<string, unknown>,
+      missingInputs: computeMissingInputs(companyData),
+      status: "preview_ready",
+      updatedAt: nowIso(),
+    },
+    applied,
   };
 }
 

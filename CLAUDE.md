@@ -112,13 +112,35 @@ touching policy, outreach content, billing, or deployment code.
 - Failure details scrub key-shaped fragments (`sk_…` etc.). Compliance
   review 6/6 PASS (advisories A1/A2 applied; A3 = Instantly TODO above).
 
-### NEXT: Phase D (start here)
+### Done (Phase D — react builds, revision loop, deploy flow, 87 tests green)
 
-Goal: React+Framer Motion full builds (STACK_MODE=react in site-builder),
-revision loop, deploy approval flow — `TODO(phase-d)` in apps/api decide
-route (DEPLOY_PRODUCTION follow-through job now has a real Vercel adapter
-to call); promote `PREVIEW_QUALITY_THRESHOLDS` to config flags.
+- Config: `STACK_MODE=react` + `PREVIEW_MIN_PERFORMANCE`/`_ACCESSIBILITY`
+  promoted to `RuntimeConfig` (`stackMode`, `previewQuality`); thresholds
+  passed into `qualityCheckPreview`.
+- `renderReactProject` (packages/templates): full Vite+React+Framer Motion
+  project; company data embedded via JSON.stringify (injection-safe), HTML
+  escaped in index.html. site-builder writes it to `data/builds/<leadId>/`
+  (`SiteProject.stack`/`buildPath`); static preview is ALWAYS still written
+  (owner review + quality check need no toolchain).
+- Revision loop: `POST /api/site-projects/:id/revisions` → `site.revise` job →
+  `applyRevisionOverrides` (REVISABLE_FIELDS whitelist; free-text-only is
+  rejected with guidance, never guessed). Applying a revision auto-expires
+  pending/granted DEPLOY_PRODUCTION approvals (artifact changed).
+- Deploy flow: `POST /api/site-projects/:id/request-deploy` (409 on failed
+  quality check) → DEPLOY_PRODUCTION approval → decide route enqueues
+  `deploy.production` → handler re-checks quality, `evaluateGate`, Vercel
+  deploy (dry_run in local, always), DeploymentRecord + status live/failed.
+  Preview deploys ride `operationalTicket` (currently dry-run in EVERY env —
+  see TODO(phase-e) in pipelines.ts before changing).
+- Vercel adapter uploads directories recursively (skips dotfiles/symlinks/
+  node_modules, errors on >200 files, vite projectSettings when package.json).
+- Dashboard LeadDetail: revision form, request-deploy button, revisions +
+  deployments lists. Compliance review 6/6 PASS (advisories D3/D5 applied).
 
-### Then
-- **Phase E** — experiment engine, weekly reports, transcript/design-reference
-  ingestion (adapter interface exists, mock only).
+### NEXT: Phase E (start here)
+
+Goal: experiment engine, weekly reports, transcript/design-reference
+ingestion (adapter interface exists, mock only). Deferred into here:
+Instantly pauseLead endpoint verification, LLM-assisted reply classification
+(`workers/outreach/src/classify.ts`), operational-ticket credentials +
+owner-triggered preview deploys (TODO(phase-e) in pipelines.ts).

@@ -1,10 +1,33 @@
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Logger } from "@william/core";
 import type { VercelAdapter } from "../types";
 import { callJson, failure, requireTicket, simulatedReal, type RealDeps } from "./shared";
 
 const API = "https://api.vercel.com";
+
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".vercel"]);
+const MAX_FILES = 200;
+
+/**
+ * Walks a build directory into Vercel's inline-file shape (posix-relative
+ * paths). Hardened: dotfiles (e.g. a stray .env) and symlinks are never
+ * uploaded, and exceeding MAX_FILES throws rather than silently deploying a
+ * partial site.
+ */
+function collectFiles(root: string, prefix = "", out: { file: string; data: string }[] = []): { file: string; data: string }[] {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      if (!SKIP_DIRS.has(entry.name)) collectFiles(join(root, entry.name), rel, out);
+    } else {
+      if (out.length >= MAX_FILES) throw new Error(`vercel.deploy: more than ${MAX_FILES} files in ${root} — refusing partial upload`);
+      out.push({ file: rel, data: readFileSync(join(root, entry.name), "utf8") });
+    }
+  }
+  return out;
+}
 
 export function createVercelAdapter(deps: RealDeps, log: Logger): VercelAdapter {
   const fetchImpl = deps.fetchImpl ?? fetch;
@@ -29,20 +52,25 @@ export function createVercelAdapter(deps: RealDeps, log: Logger): VercelAdapter 
       }
       let files: { file: string; data: string }[];
       try {
-        // Preview artifacts are single-file static HTML today; a directory
-        // source uploads its index.html. Phase D (react builds) replaces this
-        // with a git-connected deploy.
-        const path = statSync(input.sourcePath).isDirectory()
-          ? join(input.sourcePath, "index.html")
-          : input.sourcePath;
-        files = [{ file: basename(path), data: readFileSync(path, "utf8") }];
+        // Directory sources (static preview dir or a generated React project)
+        // upload all files inline; single files upload as-is.
+        files = statSync(input.sourcePath).isDirectory()
+          ? collectFiles(input.sourcePath)
+          : [{ file: basename(input.sourcePath), data: readFileSync(input.sourcePath, "utf8") }];
       } catch (err) {
         return { dryRun: false, ok: false, detail: `vercel.deploy: cannot read ${input.sourcePath}: ${err instanceof Error ? err.message : err}` };
       }
+      if (files.length === 0) {
+        return { dryRun: false, ok: false, detail: `vercel.deploy: ${input.sourcePath} has no uploadable files` };
+      }
+      const hasPackageJson = files.some((f) => f.file === "package.json");
       const res = await call("POST", "/v13/deployments", {
         name: input.projectName,
         project: input.projectName,
         files,
+        // Generated React projects are Vite apps Vercel must build.
+        // TODO(phase-e): verify framework detection against Vercel docs with a live token.
+        ...(hasPackageJson ? { projectSettings: { framework: "vite" } } : {}),
         ...(input.target === "production" ? { target: "production" } : {}),
       });
       if (!res.ok) return failure("vercel.deploy", res.status, res.text);

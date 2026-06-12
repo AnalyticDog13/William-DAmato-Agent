@@ -10,12 +10,15 @@ import {
   type Company,
   type Contact,
   type Job,
+  type DeploymentRecord,
   type Lead,
   type Niche,
   type Opportunity,
+  type SiteProject,
   type SourceProvenance,
 } from "@william/core";
-import { join } from "node:path";
+import type { ExecutionResult } from "@william/integrations";
+import { dirname, join } from "node:path";
 import { auditWebsite, qualityCheckPreview } from "@william/worker-site-auditor";
 import {
   OPT_OUT_LINE,
@@ -25,7 +28,7 @@ import {
   screenForContactability,
   validateDraft,
 } from "@william/worker-outreach";
-import { buildPreviewSite } from "@william/worker-site-builder";
+import { applyRevisionOverrides, buildPreviewSite } from "@william/worker-site-builder";
 import { createInvoiceDraft, executeInvoiceDraft } from "@william/worker-billing";
 import { suggestCall } from "@william/worker-scheduling";
 import { requestApproval } from "./approvals";
@@ -482,47 +485,208 @@ const handleReply: JobHandler = async (ctx, job) => {
   ctx.store.writeActivity(lead.id, "reply_processed", `Intent: ${classification.intent} → ${nextStep}`, { traceId: job.traceId });
 };
 
+// Browser-grade quality gate before owner review — only in playwright mode
+// so demo/CI (mock) never needs browser binaries.
+async function attachQualityCheck(
+  ctx: AppContext,
+  project: SiteProject,
+  leadId: string,
+): Promise<{ project: SiteProject; note: string }> {
+  if (ctx.config.auditorMode !== "playwright" || !project.previewPath) return { project, note: "" };
+  const qc = await qualityCheckPreview({
+    previewPath: project.previewPath,
+    outDir: join(ctx.config.dataDir, "screenshots", leadId),
+    log: ctx.log,
+    launchBrowser: ctx.browserLauncher,
+    thresholds: ctx.config.previewQuality,
+  });
+  if (!qc) return { project, note: " Quality check skipped (browser unavailable)." };
+  const fmt = (v: boolean | null) => (v === null ? "n/a" : v ? "passed" : "FAILED");
+  return {
+    project: {
+      ...project,
+      screenshotPaths: qc.screenshotPaths,
+      qualityCheck: { lighthousePassed: qc.lighthousePassed, a11yPassed: qc.a11yPassed, notes: qc.notes },
+    },
+    note: ` Quality check: lighthouse ${fmt(qc.lighthousePassed)}, a11y ${fmt(qc.a11yPassed)}.`,
+  };
+}
+
+/** Vercel project names: lowercase slug, stable per company. */
+function deployProjectName(name: string): string {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  return `wd-${slug || "site"}`;
+}
+
+function recordDeployment(
+  ctx: AppContext,
+  project: SiteProject,
+  target: "preview" | "production",
+  result: ExecutionResult,
+  approvalRequestId: string | null,
+): DeploymentRecord {
+  const now = nowIso();
+  const record: DeploymentRecord = {
+    id: newId("dpl"),
+    createdAt: now,
+    updatedAt: now,
+    siteProjectId: project.id,
+    target,
+    provider: "vercel",
+    status: result.dryRun ? "dry_run" : result.ok ? "deployed" : "failed",
+    url: result.url ?? null,
+    branch: null,
+    approvalRequestId,
+    qualityChecks: project.qualityCheck,
+    rollbackOf: null,
+    errorLog: result.ok ? null : (result.detail ?? "unknown error"),
+    deployedAt: result.ok && !result.dryRun ? now : null,
+  };
+  ctx.store.deployments.insert(record);
+  return record;
+}
+
 const handlePreviewBuild: JobHandler = async (ctx, job) => {
   const lead = getLead(ctx, job);
   const company = ctx.store.companies.get(lead.companyId);
   if (!company) throw new Error("Company missing");
   const audit = ctx.store.audits.list({ leadId: lead.id })[0] ?? null;
-  let project = buildPreviewSite({
+  const built = buildPreviewSite({
     lead,
     company,
     audit,
     dataDir: ctx.config.dataDir,
     opportunityId: (job.payload.opportunityId as string) ?? null,
+    stackMode: ctx.config.stackMode,
   });
 
-  // Browser-grade quality gate before owner review — only in playwright mode
-  // so demo/CI (mock) never needs browser binaries.
-  let qualityNote = "";
-  if (ctx.config.auditorMode === "playwright" && project.previewPath) {
-    const qc = await qualityCheckPreview({
-      previewPath: project.previewPath,
-      outDir: join(ctx.config.dataDir, "screenshots", lead.id),
-      log: ctx.log,
-      launchBrowser: ctx.browserLauncher,
+  const { project: checked, note: qualityNote } = await attachQualityCheck(ctx, built, lead.id);
+  let project = checked;
+
+  // Preview deploys are operational (audited, ungated); production stays
+  // behind DEPLOY_PRODUCTION. NOTE: operational tickets carry no credential,
+  // so they are dry-run in EVERY env today — this records the intent without
+  // uploading. TODO(phase-e): before plumbing credentials into operational
+  // tickets, make preview deploys owner-triggered — this job is reachable
+  // from webhook-originated positive replies (compliance advisory D4).
+  const vercelCred = ctx.store.credentialStatuses.findByKey("integration:vercel")[0];
+  if (vercelCred && vercelCred.mode !== "missing" && project.previewPath) {
+    const ticket = operationalTicket(ctx, "vercel.deployPreview", { type: "SiteProject", id: project.id, leadId: lead.id }, job.traceId);
+    const result = await ctx.integrations.vercel.deploy(ticket, {
+      target: "preview",
+      projectName: deployProjectName(company.name),
+      sourcePath: project.buildPath ?? dirname(project.previewPath),
     });
-    if (qc) {
-      project = {
-        ...project,
-        screenshotPaths: qc.screenshotPaths,
-        qualityCheck: { lighthousePassed: qc.lighthousePassed, a11yPassed: qc.a11yPassed, notes: qc.notes },
-      };
-      qualityNote = ` Quality check: lighthouse ${qc.lighthousePassed === null ? "n/a" : qc.lighthousePassed ? "passed" : "FAILED"}, a11y ${qc.a11yPassed === null ? "n/a" : qc.a11yPassed ? "passed" : "FAILED"}.`;
-    } else {
-      qualityNote = " Quality check skipped (browser unavailable).";
-    }
+    recordDeployment(ctx, project, "preview", result, null);
+    if (result.ok && result.url) project = { ...project, previewUrl: result.url };
   }
 
   ctx.store.siteProjects.insert(project);
   ctx.store.writeActivity(
     lead.id,
     "preview_built",
-    `Preview generated (template ${project.templateId}) — awaiting owner review.${qualityNote} ${project.missingInputs.length ? `Missing inputs: ${project.missingInputs.join(", ")}` : ""}`,
+    `Preview generated (template ${project.templateId}, ${project.stack} stack) — awaiting owner review.${qualityNote} ${project.missingInputs.length ? `Missing inputs: ${project.missingInputs.join(", ")}` : ""}`,
     { traceId: job.traceId, data: { previewPath: project.previewPath } },
+  );
+};
+
+/** Enqueued by the API when the owner submits a revision request. */
+const handleSiteRevise: JobHandler = async (ctx, job) => {
+  const revision = ctx.store.siteRevisions.get(job.payload.revisionId as string);
+  if (!revision) throw new Error(`SiteRevision ${job.payload.revisionId} not found`);
+  const project = ctx.store.siteProjects.get(revision.siteProjectId);
+  if (!project) throw new Error(`SiteProject ${revision.siteProjectId} not found`);
+
+  const { project: revised, applied } = applyRevisionOverrides(
+    project,
+    revision.overrides as Record<string, unknown>,
+    ctx.config.dataDir,
+  );
+  if (applied.length === 0) {
+    // Blocked ≠ stuck: tell the owner exactly what to send instead.
+    ctx.store.siteRevisions.save({
+      ...revision,
+      status: "rejected",
+      resultNote:
+        "No recognizable field overrides — free-text interpretation arrives with LLM-assisted builds (phase-e). Send structured fields: tagline, description, phone, email, address, city, hours, services, trustSignals.",
+    });
+    ctx.store.siteProjects.save({ ...project, status: "preview_ready", updatedAt: nowIso() });
+    ctx.store.writeActivity(project.leadId, "revision_rejected", `Revision not auto-applicable: "${revision.request.slice(0, 120)}" — structured fields required.`, { traceId: job.traceId });
+    return;
+  }
+
+  const { project: checked, note } = await attachQualityCheck(ctx, revised, project.leadId);
+  ctx.store.siteProjects.save(checked);
+  ctx.store.siteRevisions.save({ ...revision, status: "applied", resultNote: `Applied: ${applied.join(", ")}.${note}` });
+  // The artifact changed: any DEPLOY_PRODUCTION approval was for content the
+  // owner is no longer looking at — expire it so deploys must be re-requested.
+  const staleApprovals = ctx.store.approvals
+    .findByKey(`subject:DEPLOY_PRODUCTION:${project.id}`)
+    .filter((a) => a.status === "pending" || a.status === "granted");
+  for (const a of staleApprovals) {
+    ctx.store.approvals.save({
+      ...a,
+      status: "expired",
+      decisionNote: `${a.decisionNote} [auto-expired: revision ${revision.id} changed the artifact]`.trim(),
+      updatedAt: nowIso(),
+    });
+  }
+  ctx.store.writeActivity(project.leadId, "revision_applied", `Revision applied (${applied.join(", ")}) — preview re-rendered.${note}${staleApprovals.length ? " Existing deploy approval expired — re-request after review." : ""}`, { traceId: job.traceId });
+};
+
+/** Enqueued by the API ONLY when the owner grants DEPLOY_PRODUCTION. */
+const handleDeployProduction: JobHandler = async (ctx, job) => {
+  const project = ctx.store.siteProjects.get(job.payload.siteProjectId as string);
+  if (!project) throw new Error(`SiteProject ${job.payload.siteProjectId} not found`);
+  const lead = ctx.store.leads.get(project.leadId);
+  const company = lead ? ctx.store.companies.get(lead.companyId) : null;
+  const sourcePath = project.buildPath ?? (project.previewPath ? dirname(project.previewPath) : null);
+  if (!sourcePath) throw new Error("Production deploy blocked: project has no build or preview artifact");
+  // Quality gate re-check (checks → approval → deploy, never reordered): a
+  // revision after approval could have changed the artifact.
+  if (project.qualityCheck && (project.qualityCheck.lighthousePassed === false || project.qualityCheck.a11yPassed === false)) {
+    throw new Error("Production deploy blocked: preview quality check failed — revise and re-request");
+  }
+  const decision = evaluateGate(ctx, {
+    gate: "DEPLOY_PRODUCTION",
+    subjectType: "SiteProject",
+    subjectId: project.id,
+    leadId: project.leadId,
+    traceId: job.traceId,
+  });
+  if (!decision.allowed || !decision.ticket) throw new Error(`Production deploy blocked: ${decision.reason}`);
+
+  ctx.store.siteProjects.save({ ...project, status: "deploying", updatedAt: nowIso() });
+  const result = await ctx.integrations.vercel.deploy(decision.ticket, {
+    target: "production",
+    projectName: deployProjectName(company?.name ?? project.leadId),
+    sourcePath,
+  });
+  recordDeployment(ctx, project, "production", result, (job.payload.approvalRequestId as string) ?? null);
+
+  if (!result.ok) {
+    ctx.store.siteProjects.save({ ...project, status: "approved_for_customer", updatedAt: nowIso() });
+    ctx.memory.recordFailure({
+      traceId: job.traceId,
+      leadId: project.leadId,
+      jobId: job.id,
+      category: "integration_error",
+      message: `Production deploy failed: ${result.detail ?? "unknown"}`,
+      stack: null,
+      retryable: true,
+    });
+    ctx.store.writeActivity(project.leadId, "deploy_failed", `Production deploy FAILED: ${result.detail ?? "unknown"}`, { traceId: job.traceId, byApproval: true });
+    return;
+  }
+  const status = result.dryRun ? "approved_for_customer" : "live";
+  ctx.store.siteProjects.save({ ...project, status, updatedAt: nowIso() });
+  ctx.store.writeActivity(
+    project.leadId,
+    "deployed_production",
+    result.dryRun
+      ? `Production deploy SIMULATED (dry-run): ${result.detail ?? ""}`
+      : `Site LIVE at ${result.url ?? "(url pending)"}`,
+    { traceId: job.traceId, byApproval: true },
   );
 };
 
@@ -574,6 +738,8 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   "outreach.send": handleSend,
   "reply.process": handleReply,
   "preview.build": handlePreviewBuild,
+  "site.revise": handleSiteRevise,
+  "deploy.production": handleDeployProduction,
   "billing.draft": handleBillingDraft,
   "billing.execute": handleBillingExecute,
 };

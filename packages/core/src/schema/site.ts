@@ -21,6 +21,9 @@ export const SiteProject = BaseEntity.extend({
   status: SiteProjectStatus,
   previewUrl: z.string().nullable().default(null),
   previewPath: z.string().nullable().default(null),
+  /** Which artifact set exists: static preview only, or + React/Framer Motion project at buildPath. */
+  stack: z.enum(["static", "react"]).default("static"),
+  buildPath: z.string().nullable().default(null),
   screenshotPaths: z.array(z.string()).default([]),
   rationale: z.string().default(""),
   companyData: z.record(z.unknown()).default({}),
@@ -40,6 +43,8 @@ export const SiteRevision = BaseEntity.extend({
   siteProjectId: Id,
   requestedBy: z.enum(["owner", "lead"]),
   request: z.string(),
+  /** Structured field changes (REVISABLE_FIELDS in site-builder); free text alone can't be applied yet. */
+  overrides: z.record(z.unknown()).default({}),
   status: z.enum(["pending", "applied", "rejected"]),
   resultNote: z.string().default(""),
 });

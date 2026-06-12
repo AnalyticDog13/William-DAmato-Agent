@@ -89,6 +89,11 @@ export const TEMPLATES: TemplateDefinition[] = [
   },
 ];
 
+/** Lookup for re-renders (revision loop) where the selection was already made. */
+export function getTemplateById(id: string): TemplateDefinition | null {
+  return TEMPLATES.find((t) => t.id === id) ?? null;
+}
+
 /**
  * Picks the best starter kit for a niche. Exact niche match wins; otherwise
  * the closest general-purpose fit with an honest rationale.

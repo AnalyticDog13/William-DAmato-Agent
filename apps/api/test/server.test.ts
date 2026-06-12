@@ -103,6 +103,67 @@ describe("lead + approval flow over HTTP", () => {
   });
 });
 
+describe("site project routes (revision loop + deploy approval)", () => {
+  let projectId: string;
+  let leadId: string;
+
+  it("positive reply builds a preview project (inline worker)", async () => {
+    await authed("/api/leads", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Deploy Flow Cafe", websiteUrl: "https://deployflow.example.com", niche: "coffee_shop", city: "Ithaca" }),
+    });
+    const leads = (await (await authed("/api/collections/leads?search=Deploy")).json()) as { items: { id: string }[] };
+    leadId = ctx.store.leads.list().find((l) => ctx.store.companies.get(l.companyId)?.name === "Deploy Flow Cafe")!.id;
+    expect(leads.items.length).toBeGreaterThan(0);
+    await authed("/api/demo/reply", { method: "POST", body: JSON.stringify({ leadId, text: "Yes please, send the mockup!" }) });
+    const project = ctx.store.siteProjects.list({ leadId })[0]!;
+    expect(project).toBeDefined();
+    projectId = project.id;
+  });
+
+  it("revision with structured overrides is applied inline and shows in the timeline", async () => {
+    const res = await authed(`/api/site-projects/${projectId}/revisions`, {
+      method: "POST",
+      body: JSON.stringify({ request: "new tagline please", overrides: { tagline: "Espresso, properly." } }),
+    });
+    expect(res.status).toBe(201);
+    const timeline = (await (await authed(`/api/leads/${leadId}/timeline`)).json()) as {
+      siteRevisions: { status: string }[];
+    };
+    expect(timeline.siteRevisions[0]!.status).toBe("applied");
+    expect((ctx.store.siteProjects.get(projectId)!.companyData as { tagline?: string }).tagline).toBe("Espresso, properly.");
+  });
+
+  it("revision without request text is rejected", async () => {
+    const res = await authed(`/api/site-projects/${projectId}/revisions`, { method: "POST", body: JSON.stringify({ overrides: {} }) });
+    expect(res.status).toBe(400);
+  });
+
+  it("request-deploy creates a DEPLOY_PRODUCTION approval; granting it deploys dry-run only", async () => {
+    const res = await authed(`/api/site-projects/${projectId}/request-deploy`, { method: "POST" });
+    expect(res.status).toBe(201);
+    const { approval } = (await res.json()) as { approval: { id: string; gate: string; status: string } };
+    expect(approval.gate).toBe("DEPLOY_PRODUCTION");
+    expect(approval.status).toBe("pending");
+    expect(ctx.store.deployments.count()).toBe(0); // nothing until granted
+
+    const decide = await authed(`/api/approvals/${approval.id}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "granted", note: "ship" }),
+    });
+    expect(decide.status).toBe(200);
+    const record = ctx.store.deployments.list()[0]!;
+    expect(record.target).toBe("production");
+    expect(record.status).toBe("dry_run"); // local env can NEVER deploy live
+    expect(ctx.store.siteProjects.get(projectId)!.status).toBe("approved_for_customer");
+  });
+
+  it("404s on unknown projects", async () => {
+    expect((await authed("/api/site-projects/site_nope/request-deploy", { method: "POST" })).status).toBe(404);
+    expect((await authed("/api/site-projects/site_nope/revisions", { method: "POST", body: JSON.stringify({ request: "x" }) })).status).toBe(404);
+  });
+});
+
 describe("webhooks", () => {
   it("accepts unsigned webhooks ONLY in local dry-run, recording a compliance event", async () => {
     const res = await fetch(`${base}/webhooks/instantly`, {

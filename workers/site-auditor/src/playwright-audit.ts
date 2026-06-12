@@ -140,7 +140,7 @@ export const runLighthouse: LighthouseRunner = async (url, port, log) => {
   }
 };
 
-// TODO(phase-d): promote to RuntimeConfig flags when the deploy-gating flow lands.
+/** Fallback when no config is provided; runtime values come from RuntimeConfig.previewQuality. */
 export const PREVIEW_QUALITY_THRESHOLDS = {
   minPerformance: 70,
   minAccessibility: 80,
@@ -165,7 +165,9 @@ export async function qualityCheckPreview(opts: {
   log: Logger;
   launchBrowser?: ChromiumLauncher;
   lighthouseRunner?: LighthouseRunner;
+  thresholds?: { minPerformance: number; minAccessibility: number };
 }): Promise<PreviewQualityResult | null> {
+  const thresholds = opts.thresholds ?? PREVIEW_QUALITY_THRESHOLDS;
   const html = readFileSync(opts.previewPath, "utf8");
   const serverPort = await freePort();
   const server = createServer((_req, res) => {
@@ -199,8 +201,8 @@ export async function qualityCheckPreview(opts: {
     let lighthousePassed: boolean | null = null;
     if (lighthouse && lighthouse.performance != null && lighthouse.accessibility != null) {
       lighthousePassed =
-        lighthouse.performance >= PREVIEW_QUALITY_THRESHOLDS.minPerformance &&
-        lighthouse.accessibility >= PREVIEW_QUALITY_THRESHOLDS.minAccessibility;
+        lighthouse.performance >= thresholds.minPerformance &&
+        lighthouse.accessibility >= thresholds.minAccessibility;
       notes.push(
         `Lighthouse: perf ${lighthouse.performance}, a11y ${lighthouse.accessibility}, bp ${lighthouse.bestPractices ?? "n/a"}, seo ${lighthouse.seo ?? "n/a"}.`,
       );

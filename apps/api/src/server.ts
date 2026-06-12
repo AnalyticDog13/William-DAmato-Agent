@@ -1,13 +1,14 @@
 import { existsSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import express, { type Express, type Request } from "express";
-import { GATE_DEFINITIONS, Niche, PolicyGateName, newTraceId, nowIso } from "@william/core";
+import { GATE_DEFINITIONS, Niche, PolicyGateName, newId, newTraceId, nowIso } from "@william/core";
 import type { Repository } from "@william/db";
 import {
   computeMetrics,
   decideApproval,
   generateDailyReport,
   ingestLead,
+  requestApproval,
   runUntilEmpty,
   seedDemoData,
   type AppContext,
@@ -113,6 +114,8 @@ export function createServer(ctx: AppContext): Express {
       res.status(404).json({ error: "not_found" });
       return;
     }
+    const siteProjects = ctx.store.siteProjects.list({ leadId: lead.id });
+    const projectIds = new Set(siteProjects.map((p) => p.id));
     res.json({
       lead,
       company: ctx.store.companies.get(lead.companyId),
@@ -122,7 +125,9 @@ export function createServer(ctx: AppContext): Express {
       drafts: ctx.store.outreachDrafts.list({ leadId: lead.id }),
       replies: ctx.store.replyEvents.list({ leadId: lead.id }),
       opportunities: ctx.store.opportunities.list({ leadId: lead.id }),
-      siteProjects: ctx.store.siteProjects.list({ leadId: lead.id }),
+      siteProjects,
+      siteRevisions: ctx.store.siteRevisions.list({ limit: 200 }).filter((r) => projectIds.has(r.siteProjectId)),
+      deployments: ctx.store.deployments.list({ limit: 200 }).filter((d) => projectIds.has(d.siteProjectId)),
       invoices: ctx.store.invoiceDrafts.list({ leadId: lead.id }),
       callSuggestions: ctx.store.callSuggestions.list({ leadId: lead.id }),
       activity: ctx.store.activity.list({ leadId: lead.id, limit: 200, order: "asc" }),
@@ -168,14 +173,82 @@ export function createServer(ctx: AppContext): Express {
           ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: approval.subjectId }, traceId: approval.traceId, leadId: approval.leadId });
         } else if (approval.gate === "SEND_PAYMENT_REQUEST") {
           ctx.store.queue.enqueue({ type: "billing.execute", payload: { invoiceDraftId: approval.subjectId }, traceId: approval.traceId, leadId: approval.leadId });
+        } else if (approval.gate === "DEPLOY_PRODUCTION") {
+          ctx.store.queue.enqueue({ type: "deploy.production", payload: { siteProjectId: approval.subjectId, approvalRequestId: approval.id }, traceId: approval.traceId, leadId: approval.leadId });
         }
-        // TODO(phase-d): DEPLOY_PRODUCTION → deployment job.
       }
       await kickQueue(ctx);
       res.json({ approval });
     } catch (err) {
       res.status(409).json({ error: err instanceof Error ? err.message : "decide_failed" });
     }
+  });
+
+  // Revision loop: owner submits a change request; structured overrides are
+  // applied by the site.revise job, free text alone is rejected with guidance.
+  api.post("/site-projects/:id/revisions", async (req, res) => {
+    const project = ctx.store.siteProjects.get(req.params.id!);
+    if (!project) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const body = req.body as { request?: unknown; overrides?: unknown };
+    if (typeof body.request !== "string" || !body.request.trim()) {
+      res.status(400).json({ error: "request text is required" });
+      return;
+    }
+    const overrides =
+      body.overrides && typeof body.overrides === "object" && !Array.isArray(body.overrides)
+        ? (body.overrides as Record<string, unknown>)
+        : {};
+    const now = nowIso();
+    const revision = ctx.store.siteRevisions.insert({
+      id: newId("rev"),
+      createdAt: now,
+      updatedAt: now,
+      siteProjectId: project.id,
+      requestedBy: "owner",
+      request: body.request.trim(),
+      overrides,
+      status: "pending",
+      resultNote: "",
+    });
+    ctx.store.siteProjects.save({ ...project, status: "revisions", updatedAt: now });
+    const traceId = newTraceId();
+    ctx.store.queue.enqueue({ type: "site.revise", payload: { revisionId: revision.id }, traceId, leadId: project.leadId });
+    await kickQueue(ctx);
+    res.status(201).json({ revision: ctx.store.siteRevisions.get(revision.id) });
+  });
+
+  // Owner approves the preview for the customer → DEPLOY_PRODUCTION approval
+  // request. Quality gate first; the granted approval enqueues deploy.production.
+  api.post("/site-projects/:id/request-deploy", (req, res) => {
+    const project = ctx.store.siteProjects.get(req.params.id!);
+    if (!project) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (!project.previewPath && !project.buildPath) {
+      res.status(409).json({ error: "no_artifact", detail: "Project has no preview or build to deploy" });
+      return;
+    }
+    if (project.qualityCheck && (project.qualityCheck.lighthousePassed === false || project.qualityCheck.a11yPassed === false)) {
+      res.status(409).json({ error: "quality_failed", detail: "Preview failed its quality check — revise before requesting a deploy" });
+      return;
+    }
+    const lead = ctx.store.leads.get(project.leadId);
+    const company = lead ? ctx.store.companies.get(lead.companyId) : null;
+    const approval = requestApproval(ctx, {
+      gate: "DEPLOY_PRODUCTION",
+      subjectType: "SiteProject",
+      subjectId: project.id,
+      leadId: project.leadId,
+      title: `Deploy ${company?.name ?? project.leadId} site to production`,
+      detail: `Template ${project.templateId} (${project.stack} stack). ${project.qualityCheck ? "Quality check passed." : "No quality check ran (mock/http auditor mode)."}`,
+      traceId: newTraceId(),
+    });
+    ctx.store.siteProjects.save({ ...project, status: "approved_for_customer", updatedAt: nowIso() });
+    res.status(201).json({ approval });
   });
 
   api.get("/policies", (_req, res) => {

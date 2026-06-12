@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -187,6 +187,29 @@ describe("vercel real adapter", () => {
     const sent = JSON.parse(calls[0]!.body) as { files: { file: string; data: string }[]; target?: string };
     expect(sent.files[0]).toMatchObject({ file: "index.html", data: "<html>preview</html>" });
     expect(sent.target).toBeUndefined();
+  });
+
+  it("uploads a react project directory recursively with vite projectSettings, live", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wdam-react-"));
+    writeFileSync(join(dir, "package.json"), '{"name":"p"}', "utf8");
+    writeFileSync(join(dir, "index.html"), "<html></html>", "utf8");
+    mkdirSync(join(dir, "src"));
+    writeFileSync(join(dir, "src", "App.tsx"), "export default () => null;", "utf8");
+    mkdirSync(join(dir, "node_modules"));
+    writeFileSync(join(dir, "node_modules", "skip.js"), "no", "utf8");
+    writeFileSync(join(dir, ".env"), "SECRET=1", "utf8"); // dotfiles must never upload
+    const { impl, calls } = fakeFetch([{ id: "dpl_9", url: "p-prod.vercel.app" }]);
+    const vercel = createVercelAdapter({ env: { VERCEL_TOKEN: "vt_1" }, fetchImpl: impl }, log);
+    const res = await vercel.deploy(ticket(false), { target: "production", projectName: "p", sourcePath: dir });
+    expect(res.ok).toBe(true);
+    const sent = JSON.parse(calls[0]!.body) as {
+      files: { file: string }[];
+      target?: string;
+      projectSettings?: { framework: string };
+    };
+    expect(sent.files.map((f) => f.file).sort()).toEqual(["index.html", "package.json", "src/App.tsx"]);
+    expect(sent.projectSettings).toEqual({ framework: "vite" });
+    expect(sent.target).toBe("production");
   });
 });
 

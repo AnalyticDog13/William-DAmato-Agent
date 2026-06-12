@@ -10,7 +10,9 @@ interface Timeline {
   scores: { score: number; tier: string; reasons: string[] }[];
   drafts: { id: string; status: string; subject: string; body: string }[];
   replies: { intent: string; intentConfidence: number; bodyExcerpt: string; recommendedNextStep: string }[];
-  siteProjects: { id: string; status: string; templateId: string; rationale: string; missingInputs: string[]; screenshotPaths: string[]; qualityCheck: { lighthousePassed: boolean | null; a11yPassed: boolean | null; notes: string[] } | null }[];
+  siteProjects: { id: string; status: string; templateId: string; stack: string; previewUrl: string | null; rationale: string; missingInputs: string[]; screenshotPaths: string[]; qualityCheck: { lighthousePassed: boolean | null; a11yPassed: boolean | null; notes: string[] } | null }[];
+  siteRevisions: { id: string; request: string; status: string; resultNote: string; createdAt: string }[];
+  deployments: { id: string; target: string; status: string; url: string | null; createdAt: string; errorLog: string | null }[];
   callSuggestions: { reason: string; suggestedSlots: { start: string; end: string }[]; status: string }[];
   activity: { id: string; kind: string; message: string; createdAt: string; byApproval: boolean }[];
 }
@@ -45,6 +47,108 @@ function Screenshot({ leadId, path, label }: { leadId: string; path: string; lab
   );
 }
 
+/** Revision form + deploy request for a built site project. */
+function SiteProjectActions({ t, onChanged }: { t: Timeline; onChanged: () => void }) {
+  const project = t.siteProjects[0];
+  const [request, setRequest] = useState("");
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!project) return null;
+
+  const qualityFailed =
+    project.qualityCheck?.lighthousePassed === false || project.qualityCheck?.a11yPassed === false;
+  const overrideFields = ["tagline", "description", "phone", "email", "hours"] as const;
+
+  const submitRevision = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const filled = Object.fromEntries(Object.entries(overrides).filter(([, v]) => v.trim()));
+      await api(`/api/site-projects/${project.id}/revisions`, {
+        method: "POST",
+        body: JSON.stringify({ request: request || "Field updates", overrides: filled }),
+      });
+      setRequest("");
+      setOverrides({});
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "revision failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const requestDeploy = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/site-projects/${project.id}/request-deploy`, { method: "POST" });
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "deploy request failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="panel">
+      <h3>Site project — revisions &amp; deploy</h3>
+      <p className="sub">
+        <span className="badge blue">{project.stack} stack</span> <span className="badge amber">{project.status}</span>
+        {project.previewUrl && <> · <a href={project.previewUrl} target="_blank" rel="noreferrer">preview deploy ↗</a></>}
+      </p>
+      <div style={{ display: "grid", gap: 6, maxWidth: 480 }}>
+        <input placeholder="What should change? (note for the record)" value={request} onChange={(e) => setRequest(e.target.value)} />
+        {overrideFields.map((f) => (
+          <input
+            key={f}
+            placeholder={`${f} (leave blank to keep)`}
+            value={overrides[f] ?? ""}
+            onChange={(e) => setOverrides((o) => ({ ...o, [f]: e.target.value }))}
+          />
+        ))}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button disabled={busy} onClick={submitRevision}>Submit revision</button>
+          <button disabled={busy || qualityFailed} onClick={requestDeploy} title={qualityFailed ? "Preview failed its quality check — revise first" : "Creates a DEPLOY_PRODUCTION approval for you to grant in the review queue"}>
+            Request production deploy
+          </button>
+        </div>
+        {qualityFailed && <p className="sub">Deploy disabled: preview failed its quality check.</p>}
+        {error && <p className="sub" style={{ color: "#e66" }}>{error}</p>}
+      </div>
+      {t.siteRevisions.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 12 }}>Revisions</h3>
+          <ul>
+            {t.siteRevisions.map((r) => (
+              <li key={r.id}>
+                <span className={`badge ${r.status === "applied" ? "green" : r.status === "rejected" ? "red" : "amber"}`}>{r.status}</span>{" "}
+                {r.request} {r.resultNote && <span className="sub">— {r.resultNote}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {t.deployments.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 12 }}>Deployments</h3>
+          <ul>
+            {t.deployments.map((d) => (
+              <li key={d.id}>
+                <span className={`badge ${d.status === "deployed" ? "green" : d.status === "failed" ? "red" : "blue"}`}>{d.target}: {d.status}</span>{" "}
+                {d.url && <a href={d.url} target="_blank" rel="noreferrer">{d.url}</a>}
+                {d.errorLog && <span className="sub"> — {d.errorLog}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function LeadDetail() {
   const { id } = useParams<{ id: string }>();
   const [t, setT] = useState<Timeline | null>(null);
@@ -54,6 +158,10 @@ export function LeadDetail() {
     if (!id) return;
     api<Timeline>(`/api/leads/${id}/timeline`).then(setT);
   }, [id]);
+
+  const reload = () => {
+    if (id) api<Timeline>(`/api/leads/${id}/timeline`).then(setT);
+  };
 
   useEffect(() => {
     if (!id || !t || t.siteProjects.length === 0) return;
@@ -160,6 +268,8 @@ export function LeadDetail() {
           )}
         </div>
       </div>
+
+      {t.siteProjects.length > 0 && <SiteProjectActions t={t} onChanged={reload} />}
 
       {t.drafts.length > 0 && (
         <div className="panel">

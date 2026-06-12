@@ -1,9 +1,12 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { newTraceId, nowIso } from "@william/core";
+import { newId, newTraceId, nowIso } from "@william/core";
 import {
   createContext,
   decideApproval,
   ingestLead,
+  requestApproval,
   runUntilEmpty,
   seedDemoData,
   generateDailyReport,
@@ -44,6 +47,124 @@ describe("preview quality check (playwright mode)", () => {
     expect(project.qualityCheck).toBeNull();
     const activity = ctx.store.activity.list({ leadId: l.id }).find((a) => a.kind === "preview_built")!;
     expect(activity.message).toContain("Quality check skipped");
+  });
+});
+
+describe("phase D: react builds, revision loop, production deploy", () => {
+  async function buildProject(name: string) {
+    ingestLead(ctx, lead(name, `https://${name.toLowerCase().replace(/\s+/g, "-")}.example.com`));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+    ctx.store.queue.enqueue({ type: "preview.build", payload: { leadId: l.id }, traceId: newTraceId(), leadId: l.id });
+    await runUntilEmpty(ctx, 100, futureClock);
+    return ctx.store.siteProjects.list({ leadId: l.id })[0]!;
+  }
+
+  function enqueueRevision(projectId: string, request: string, overrides: Record<string, unknown>) {
+    const now = nowIso();
+    const revision = ctx.store.siteRevisions.insert({
+      id: newId("rev"),
+      createdAt: now,
+      updatedAt: now,
+      siteProjectId: projectId,
+      requestedBy: "owner" as const,
+      request,
+      overrides,
+      status: "pending" as const,
+      resultNote: "",
+    });
+    ctx.store.queue.enqueue({ type: "site.revise", payload: { revisionId: revision.id }, traceId: newTraceId(), leadId: null });
+    return revision;
+  }
+
+  it("STACK_MODE=react emits a full Vite+Framer Motion project alongside the static preview", async () => {
+    ctx.config.stackMode = "react";
+    const project = await buildProject("React Stack Barbers");
+    expect(project.stack).toBe("react");
+    expect(project.buildPath).toBeTruthy();
+    expect(existsSync(join(project.buildPath!, "package.json"))).toBe(true);
+    expect(readFileSync(join(project.buildPath!, "src", "App.tsx"), "utf8")).toContain("framer-motion");
+    expect(existsSync(project.previewPath!)).toBe(true); // static preview still written
+  });
+
+  it("structured revision overrides are applied and re-rendered", async () => {
+    const project = await buildProject("Revise Barbers");
+    const revision = enqueueRevision(project.id, "Change the tagline", { tagline: "Ithaca's sharpest fades." });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.siteRevisions.get(revision.id)!.status).toBe("applied");
+    const updated = ctx.store.siteProjects.get(project.id)!;
+    expect(updated.status).toBe("preview_ready");
+    expect((updated.companyData as { tagline?: string }).tagline).toBe("Ithaca's sharpest fades.");
+    expect(readFileSync(updated.previewPath!, "utf8")).toContain("sharpest fades.");
+  });
+
+  it("free-text-only revisions are rejected with guidance, never guessed", async () => {
+    const project = await buildProject("Freetext Barbers");
+    const revision = enqueueRevision(project.id, "make it pop", {});
+    await runUntilEmpty(ctx, 100, futureClock);
+    const r = ctx.store.siteRevisions.get(revision.id)!;
+    expect(r.status).toBe("rejected");
+    expect(r.resultNote).toContain("tagline");
+    expect(ctx.store.siteProjects.get(project.id)!.status).toBe("preview_ready");
+  });
+
+  it("applying a revision expires any pending/granted DEPLOY_PRODUCTION approval", async () => {
+    const project = await buildProject("Stale Approval Barbers");
+    const approval = requestApproval(ctx, {
+      gate: "DEPLOY_PRODUCTION",
+      subjectType: "SiteProject",
+      subjectId: project.id,
+      leadId: project.leadId,
+      title: "Deploy test",
+      detail: "test",
+      traceId: newTraceId(),
+    });
+    decideApproval(ctx, approval.id, "granted", "looks good");
+    enqueueRevision(project.id, "new tagline", { tagline: "Changed after approval" });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.approvals.get(approval.id)!.status).toBe("expired");
+    // The expired approval no longer authorizes a deploy.
+    ctx.store.queue.enqueue({ type: "deploy.production", payload: { siteProjectId: project.id }, traceId: newTraceId(), leadId: project.leadId });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.deployments.count()).toBe(0);
+  });
+
+  it("deploy.production without approval is blocked and records policy_denied", async () => {
+    const project = await buildProject("Blocked Deploy Barbers");
+    ctx.store.queue.enqueue({ type: "deploy.production", payload: { siteProjectId: project.id }, traceId: newTraceId(), leadId: project.leadId });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.deployments.count()).toBe(0);
+    expect(ctx.store.failures.list().some((f) => f.category === "policy_denied")).toBe(true);
+  });
+
+  it("granted DEPLOY_PRODUCTION deploys as dry-run; local can never go live", async () => {
+    const project = await buildProject("Approved Deploy Barbers");
+    const approval = requestApproval(ctx, {
+      gate: "DEPLOY_PRODUCTION",
+      subjectType: "SiteProject",
+      subjectId: project.id,
+      leadId: project.leadId,
+      title: "Deploy test",
+      detail: "test",
+      traceId: newTraceId(),
+    });
+    decideApproval(ctx, approval.id, "granted", "ship it");
+    ctx.store.queue.enqueue({
+      type: "deploy.production",
+      payload: { siteProjectId: project.id, approvalRequestId: approval.id },
+      traceId: approval.traceId,
+      leadId: project.leadId,
+    });
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    const record = ctx.store.deployments.list()[0]!;
+    expect(record.target).toBe("production");
+    expect(record.status).toBe("dry_run"); // local env: simulated, zero network
+    expect(record.approvalRequestId).toBe(approval.id);
+    const updated = ctx.store.siteProjects.get(project.id)!;
+    expect(updated.status).toBe("approved_for_customer"); // NOT live
+    const activity = ctx.store.activity.list({ leadId: project.leadId }).find((a) => a.kind === "deployed_production")!;
+    expect(activity.message).toContain("SIMULATED");
   });
 });
 
