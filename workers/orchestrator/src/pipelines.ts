@@ -15,7 +15,8 @@ import {
   type Opportunity,
   type SourceProvenance,
 } from "@william/core";
-import { auditWebsite } from "@william/worker-site-auditor";
+import { join } from "node:path";
+import { auditWebsite, qualityCheckPreview } from "@william/worker-site-auditor";
 import {
   OPT_OUT_LINE,
   classifyReply,
@@ -150,7 +151,13 @@ const handleAudit: JobHandler = async (ctx, job) => {
   let lead = getLead(ctx, job);
   lead = setLeadStatus(ctx, lead, "auditing");
   const ticket = operationalTicket(ctx, "site_audit.crawl", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId);
-  const audit = await auditWebsite(lead, { mode: ctx.config.auditorMode, log: ctx.log, ticket });
+  const audit = await auditWebsite(lead, {
+    mode: ctx.config.auditorMode,
+    log: ctx.log,
+    ticket,
+    dataDir: ctx.config.dataDir,
+    launchBrowser: ctx.browserLauncher,
+  });
   ctx.store.audits.insert(audit);
   if (audit.robotsAllowed === false) {
     ctx.store.writeCompliance("robots_respected", `Crawl skipped for ${lead.domain} per robots.txt`, {
@@ -480,18 +487,41 @@ const handlePreviewBuild: JobHandler = async (ctx, job) => {
   const company = ctx.store.companies.get(lead.companyId);
   if (!company) throw new Error("Company missing");
   const audit = ctx.store.audits.list({ leadId: lead.id })[0] ?? null;
-  const project = buildPreviewSite({
+  let project = buildPreviewSite({
     lead,
     company,
     audit,
     dataDir: ctx.config.dataDir,
     opportunityId: (job.payload.opportunityId as string) ?? null,
   });
+
+  // Browser-grade quality gate before owner review — only in playwright mode
+  // so demo/CI (mock) never needs browser binaries.
+  let qualityNote = "";
+  if (ctx.config.auditorMode === "playwright" && project.previewPath) {
+    const qc = await qualityCheckPreview({
+      previewPath: project.previewPath,
+      outDir: join(ctx.config.dataDir, "screenshots", lead.id),
+      log: ctx.log,
+      launchBrowser: ctx.browserLauncher,
+    });
+    if (qc) {
+      project = {
+        ...project,
+        screenshotPaths: qc.screenshotPaths,
+        qualityCheck: { lighthousePassed: qc.lighthousePassed, a11yPassed: qc.a11yPassed, notes: qc.notes },
+      };
+      qualityNote = ` Quality check: lighthouse ${qc.lighthousePassed === null ? "n/a" : qc.lighthousePassed ? "passed" : "FAILED"}, a11y ${qc.a11yPassed === null ? "n/a" : qc.a11yPassed ? "passed" : "FAILED"}.`;
+    } else {
+      qualityNote = " Quality check skipped (browser unavailable).";
+    }
+  }
+
   ctx.store.siteProjects.insert(project);
   ctx.store.writeActivity(
     lead.id,
     "preview_built",
-    `Preview generated (template ${project.templateId}) — awaiting owner review. ${project.missingInputs.length ? `Missing inputs: ${project.missingInputs.join(", ")}` : ""}`,
+    `Preview generated (template ${project.templateId}) — awaiting owner review.${qualityNote} ${project.missingInputs.length ? `Missing inputs: ${project.missingInputs.join(", ")}` : ""}`,
     { traceId: job.traceId, data: { previewPath: project.previewPath } },
   );
 };

@@ -50,7 +50,9 @@ on restart, and matching OwnerRequests can be marked fulfilled.
 
 - `AUDITOR_MODE=mock` (default) — synthesized audits, zero network.
 - `AUDITOR_MODE=http` — real robots.txt + homepage fetch, heuristic analysis.
-- `AUDITOR_MODE=playwright` — Phase B; will need `npx playwright install chromium`.
+- `AUDITOR_MODE=playwright` — real Chromium audit (screenshots, Lighthouse,
+  axe-core) plus the preview quality gate. Needs `npx playwright install chromium`;
+  falls back to `http` mode automatically when browsers are missing.
 
 ## Production checklist
 

@@ -25,6 +25,14 @@ export const SiteProject = BaseEntity.extend({
   rationale: z.string().default(""),
   companyData: z.record(z.unknown()).default({}),
   missingInputs: z.array(z.string()).default([]),
+  qualityCheck: z
+    .object({
+      lighthousePassed: z.boolean().nullable(),
+      a11yPassed: z.boolean().nullable(),
+      notes: z.array(z.string()).default([]),
+    })
+    .nullable()
+    .default(null),
 });
 export type SiteProject = z.infer<typeof SiteProject>;
 

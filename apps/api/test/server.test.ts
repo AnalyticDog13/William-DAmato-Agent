@@ -29,6 +29,15 @@ const authed = (path: string, init: RequestInit = {}) =>
     headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json", ...(init.headers ?? {}) },
   });
 
+describe("screenshot route", () => {
+  it("requires auth, 404s on missing files, and rejects traversal", async () => {
+    expect((await fetch(`${base}/api/screenshots/lead_x/home-desktop.png`)).status).toBe(401);
+    expect((await authed("/api/screenshots/lead_x/home-desktop.png")).status).toBe(404);
+    expect((await authed("/api/screenshots/lead_x/..%2F..%2Fwilliam.db")).status).toBe(404);
+    expect((await authed("/api/screenshots/..%2F..%2Fetc/passwd.png")).status).toBe(404);
+  });
+});
+
 describe("API auth (server-side, every route)", () => {
   it("rejects missing and wrong tokens", async () => {
     expect((await fetch(`${base}/api/overview`)).status).toBe(401);

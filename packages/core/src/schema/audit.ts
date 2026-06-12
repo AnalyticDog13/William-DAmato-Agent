@@ -12,6 +12,7 @@ export const AuditedPage = z.object({
   url: z.string(),
   title: z.string().nullable(),
   screenshotPath: z.string().nullable(),
+  mobileScreenshotPath: z.string().nullable().default(null),
   loadMs: z.number().nullable(),
   issues: z.array(z.string()).default([]),
 });

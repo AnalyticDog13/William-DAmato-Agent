@@ -70,7 +70,8 @@ export function buildPreviewSite(input: BuildInput): SiteProject {
     status: missingInputs.length > 2 ? "gathering_inputs" : "preview_ready",
     previewUrl: null, // set by deployment pipeline after Vercel preview deploy
     previewPath,
-    screenshotPaths: [], // TODO(phase-b): Playwright screenshots of the preview
+    screenshotPaths: [], // populated by the playwright quality check in the orchestrator
+    qualityCheck: null,
     rationale: [
       selection.rationale,
       designRefs.length

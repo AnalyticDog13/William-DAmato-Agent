@@ -78,26 +78,28 @@ touching policy, outreach content, billing, or deployment code.
 - CLAUDE.md, 8 subagents, README, docs/architecture.md, docs/setup.md
 - Verified: `npm run demo` end-to-end; live API smoke test; dashboard build
 
-### NEXT: Phase B (start here)
+### Done (Phase B — browser-grade auditing, 56 tests green)
 
-Goal: real browser-grade auditing behind `AUDITOR_MODE=playwright`.
+- `AUDITOR_MODE=playwright`: real Chromium audit (screenshots desktop+mobile
+  to `data/screenshots/<leadId>/`, Lighthouse via CDP port, axe-core scan)
+  with graceful fallback to `http` mode when browsers missing (no crash).
+  Real runs need `npx playwright install chromium`; CI/demo stay on mock.
+- `workers/site-auditor/src/browser.ts` (MinimalBrowser types, injectable
+  `ChromiumLauncher`) + `playwright-audit.ts` (`playwrightAudit`,
+  `qualityCheckPreview`); `AppContext.browserLauncher?` for test injection.
+- Preview quality gate: `qualityCheckPreview` (ephemeral http server +
+  screenshot + Lighthouse/axe thresholds in `PREVIEW_QUALITY_THRESHOLDS`,
+  TODO(phase-d) config flag) runs in handlePreviewBuild, playwright mode only;
+  results in `SiteProject.qualityCheck` + `screenshotPaths`.
+- Authed `GET /api/screenshots/:leadId/:file` (traversal-guarded); LeadDetail
+  shows audit screenshots, Lighthouse scores, a11y findings, quality badges.
 
-1. Add `playwright` dep to workers/site-auditor; detect installed browsers
-   and fall back to `http` mode gracefully when missing (no crash).
-2. Playwright audit mode: screenshots (desktop + mobile viewports) saved to
-   `data/screenshots/<leadId>/`, wired into `WebsiteAudit.pages[].screenshotPath`.
-3. Lighthouse integration → real scores into `WebsiteAudit.lighthouse`.
-4. axe-core accessibility scan → `WebsiteAudit.a11yFindings`.
-5. Authed API route to serve screenshots; show them on the LeadDetail page.
-6. Playwright quality check of GENERATED previews (site-builder output):
-   screenshot + Lighthouse gate before owner review.
-7. Tests for fallback behavior + preview quality-check pipeline. Real runs
-   need `npx playwright install chromium`; keep CI/demo on mock mode.
+### NEXT: Phase C (start here)
+
+Goal: real adapters (instantly/gmail/stripe/vercel) behind the existing
+interfaces in packages/integrations; select by credential presence.
 
 ### Then
-
-- **Phase C** — real adapters (instantly/gmail/stripe/vercel) behind the
-  existing interfaces in packages/integrations; select by credential presence.
 - **Phase D** — React+Framer Motion full builds, revision loop, deploy
   approval flow (`TODO(phase-d)` in apps/api decide route: DEPLOY_PRODUCTION
   follow-through job).

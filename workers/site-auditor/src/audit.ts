@@ -6,7 +6,9 @@ import {
   type PolicyTicket,
   type WebsiteAudit,
 } from "@william/core";
+import { launchChromium, type ChromiumLauncher } from "./browser";
 import { deriveFindings, extractSignals } from "./heuristics";
+import { playwrightAudit, type LighthouseRunner } from "./playwright-audit";
 
 export type AuditorMode = "mock" | "http" | "playwright";
 
@@ -16,14 +18,19 @@ export interface AuditorDeps {
   /** Operational ticket authorizing outbound HTTP (crawl is an external call). */
   ticket: PolicyTicket;
   fetchImpl?: typeof fetch;
+  /** Root for screenshot output (playwright mode). Defaults to ./data. */
+  dataDir?: string;
+  /** Injectable for tests; defaults to real Playwright Chromium detection. */
+  launchBrowser?: ChromiumLauncher;
+  lighthouseRunner?: LighthouseRunner;
 }
 
 /**
  * Audits a lead's website. Modes:
  * - mock: fully synthesized from lead metadata (demo/local default)
  * - http: real fetch of robots.txt + homepage, heuristic extraction (no browser)
- * - playwright: TODO(phase-b): screenshots + Lighthouse + axe via Playwright;
- *   requires `npx playwright install chromium`. Falls back to http.
+ * - playwright: screenshots + Lighthouse + axe via real Chromium; requires
+ *   `npx playwright install chromium`. Falls back to http when unavailable.
  */
 export async function auditWebsite(lead: Lead, deps: AuditorDeps): Promise<WebsiteAudit> {
   const base: Omit<WebsiteAudit, "summary" | "auditScore"> = {
@@ -32,7 +39,7 @@ export async function auditWebsite(lead: Lead, deps: AuditorDeps): Promise<Websi
     updatedAt: nowIso(),
     leadId: lead.id,
     url: lead.websiteUrl,
-    mode: deps.mode === "playwright" ? "http" : deps.mode,
+    mode: deps.mode,
     robotsAllowed: null,
     hasWebsite: !!lead.websiteUrl,
     hasSsl: null,
@@ -56,7 +63,46 @@ export async function auditWebsite(lead: Lead, deps: AuditorDeps): Promise<Websi
   }
 
   if (deps.mode === "mock") return mockAudit(lead, base);
+
+  if (deps.mode === "playwright") {
+    // Compliance: robots.txt check happens BEFORE any browser launch.
+    const robotsAllowed = await checkRobots(new URL(lead.websiteUrl).origin, deps.fetchImpl ?? fetch);
+    if (!robotsAllowed) {
+      deps.log.warn("robots.txt disallows crawling; aborting audit", { leadId: lead.id });
+      return robotsAbortedAudit(base);
+    }
+    const result = await playwrightAudit(lead, base, {
+      log: deps.log,
+      dataDir: deps.dataDir ?? "./data",
+      launchBrowser: deps.launchBrowser ?? launchChromium,
+      lighthouseRunner: deps.lighthouseRunner,
+    });
+    if (result) return result;
+    deps.log.warn("Playwright mode unavailable — falling back to http audit", { leadId: lead.id });
+    return httpAudit(lead, { ...base, mode: "http" }, deps);
+  }
+
   return httpAudit(lead, base, deps);
+}
+
+/** robots.txt check shared by http and playwright modes. Unreachable = allowed (standard convention). */
+export async function checkRobots(origin: string, fetchImpl: typeof fetch): Promise<boolean> {
+  try {
+    const res = await fetchImpl(`${origin}/robots.txt`, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) return !robotsDisallowsRoot(await res.text());
+  } catch {
+    // Unreachable robots.txt is treated as allowed.
+  }
+  return true;
+}
+
+function robotsAbortedAudit(base: Omit<WebsiteAudit, "summary" | "auditScore">): WebsiteAudit {
+  return {
+    ...base,
+    robotsAllowed: false,
+    summary: "robots.txt disallows crawling — audit aborted out of respect for the site's policy.",
+    auditScore: 50,
+  };
 }
 
 function mockAudit(lead: Lead, base: Omit<WebsiteAudit, "summary" | "auditScore">): WebsiteAudit {
@@ -91,7 +137,7 @@ function mockAudit(lead: Lead, base: Omit<WebsiteAudit, "summary" | "auditScore"
     mobileFriendly: bad !== 0,
     lighthouse,
     pages: [
-      { url: lead.websiteUrl!, title: `${lead.domain} — Home`, screenshotPath: null, loadMs: bad === 0 ? 6100 : 2100, issues: [] },
+      { url: lead.websiteUrl!, title: `${lead.domain} — Home`, screenshotPath: null, mobileScreenshotPath: null, loadMs: bad === 0 ? 6100 : 2100, issues: [] },
     ],
     extracted: {
       contactEmails: bad < 2 ? [`info@${lead.domain}`] : [],
@@ -129,24 +175,10 @@ async function httpAudit(
   const origin = new URL(url).origin;
 
   // Compliance: check robots.txt before any crawling.
-  let robotsAllowed = true;
-  try {
-    const robotsRes = await fetchImpl(`${origin}/robots.txt`, { signal: AbortSignal.timeout(8000) });
-    if (robotsRes.ok) {
-      const robots = await robotsRes.text();
-      robotsAllowed = !robotsDisallowsRoot(robots);
-    }
-  } catch {
-    // Unreachable robots.txt is treated as allowed (standard convention).
-  }
+  const robotsAllowed = await checkRobots(origin, fetchImpl);
   if (!robotsAllowed) {
     deps.log.warn("robots.txt disallows crawling; aborting audit", { leadId: lead.id });
-    return {
-      ...base,
-      robotsAllowed: false,
-      summary: "robots.txt disallows crawling — audit aborted out of respect for the site's policy.",
-      auditScore: 50,
-    };
+    return robotsAbortedAudit(base);
   }
 
   const started = Date.now();
@@ -175,7 +207,7 @@ async function httpAudit(
     robotsAllowed: true,
     hasSsl: finalUrl.startsWith("https://"),
     mobileFriendly: signals.hasViewportMeta,
-    pages: [{ url: finalUrl, title: signals.title, screenshotPath: null, loadMs, issues: [] }],
+    pages: [{ url: finalUrl, title: signals.title, screenshotPath: null, mobileScreenshotPath: null, loadMs, issues: [] }],
     extracted: {
       contactEmails: signals.contactEmails,
       phones: signals.phones,

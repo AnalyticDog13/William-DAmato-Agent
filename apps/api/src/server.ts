@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import express, { type Express, type Request } from "express";
 import { GATE_DEFINITIONS, Niche, PolicyGateName, newTraceId, nowIso } from "@william/core";
 import type { Repository } from "@william/db";
@@ -241,11 +241,24 @@ export function createServer(ctx: AppContext): Express {
     }
     const path = resolve(project.previewPath);
     const expectedRoot = resolve(join(ctx.config.dataDir, "previews"));
-    if (!path.startsWith(expectedRoot) || !existsSync(path)) {
+    if (!path.startsWith(expectedRoot + sep) || !existsSync(path)) {
       res.status(404).json({ error: "no_preview" });
       return;
     }
     res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:");
+    res.sendFile(path);
+  });
+
+  // Audit/preview screenshots (auth applies; basename + root-prefix guard against traversal).
+  api.get("/screenshots/:leadId/:file", (req, res) => {
+    const file = basename(req.params.file!);
+    const leadId = basename(req.params.leadId!);
+    const expectedRoot = resolve(join(ctx.config.dataDir, "screenshots"));
+    const path = resolve(join(expectedRoot, leadId, file));
+    if (!file.endsWith(".png") || !path.startsWith(expectedRoot + sep) || !existsSync(path)) {
+      res.status(404).json({ error: "no_screenshot" });
+      return;
+    }
     res.sendFile(path);
   });
 

@@ -12,6 +12,7 @@ import {
 import { Store, openDatabase, openMemoryDatabase } from "@william/db";
 import { createIntegrations, detectCredentials, type Integrations } from "@william/integrations";
 import { MemoryService } from "@william/memory";
+import type { ChromiumLauncher } from "@william/worker-site-auditor";
 
 export interface AppContext {
   config: RuntimeConfig;
@@ -20,9 +21,13 @@ export interface AppContext {
   engine: PolicyEngine;
   integrations: Integrations;
   memory: MemoryService;
+  /** Injectable browser launcher (tests); defaults to real Playwright detection. */
+  browserLauncher?: ChromiumLauncher;
 }
 
-export function createContext(opts: { inMemory?: boolean; silent?: boolean } = {}): AppContext {
+export function createContext(
+  opts: { inMemory?: boolean; silent?: boolean; browserLauncher?: ChromiumLauncher } = {},
+): AppContext {
   const config = loadConfig();
   const log = createLogger(
     { app: "william" },
@@ -33,7 +38,7 @@ export function createContext(opts: { inMemory?: boolean; silent?: boolean } = {
   const integrations = createIntegrations(config, log);
   const memory = new MemoryService(store);
   syncCredentialStatuses(store, config);
-  return { config, store, log, engine, integrations, memory };
+  return { config, store, log, engine, integrations, memory, browserLauncher: opts.browserLauncher };
 }
 
 /** Persists current credential detection so the dashboard Integrations page is truthful. */

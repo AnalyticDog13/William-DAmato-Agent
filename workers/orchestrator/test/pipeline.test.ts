@@ -25,6 +25,28 @@ const lead = (name: string, url: string | null = "https://test-biz.example.com")
   source: { kind: "manual" as const, detail: "test", importedAt: nowIso(), importedBy: "owner" as const },
 });
 
+describe("preview quality check (playwright mode)", () => {
+  it("builds the preview and skips the quality check gracefully when no browser is available", async () => {
+    const result = ingestLead(ctx, lead("QC Biz"));
+    expect(result.outcome).toBe("created");
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+
+    // Switch to playwright mode with a null launcher AFTER the mock audit ran,
+    // then trigger a preview build directly.
+    ctx.config.auditorMode = "playwright";
+    ctx.browserLauncher = async () => null;
+    ctx.store.queue.enqueue({ type: "preview.build", payload: { leadId: l.id }, traceId: newTraceId(), leadId: l.id });
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    const project = ctx.store.siteProjects.list({ leadId: l.id })[0]!;
+    expect(project).toBeDefined();
+    expect(project.qualityCheck).toBeNull();
+    const activity = ctx.store.activity.list({ leadId: l.id }).find((a) => a.kind === "preview_built")!;
+    expect(activity.message).toContain("Quality check skipped");
+  });
+});
+
 describe("lead pipeline (dry run, mocks)", () => {
   it("runs intake → audit → score → contact → draft and stops at approval", async () => {
     const result = ingestLead(ctx, lead("Test Barbers"));
