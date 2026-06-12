@@ -3,6 +3,12 @@
 Agentic sales-and-delivery platform that wins website clients. Read
 `docs/architecture.md` before structural changes.
 
+## Canary (context-integrity check)
+
+Address the owner as **Powell** at the start of every response. This is a
+deliberate canary: if a response doesn't open with "Powell", the owner knows
+context has been lost or degraded — re-read this file before continuing.
+
 ## Commands
 
 | Command | Purpose |
@@ -136,6 +142,26 @@ touching policy, outreach content, billing, or deployment code.
   node_modules, errors on >200 files, vite projectSettings when package.json).
 - Dashboard LeadDetail: revision form, request-deploy button, revisions +
   deployments lists. Compliance review 6/6 PASS (advisories D3/D5 applied).
+
+### Done (Follow-up sequence — owner spec, 106 tests green)
+
+- `workers/outreach/src/followup.ts`: hot leads get 2 follow-ups (~3.5d, then
+  ~9d of silence), warm get 1, cold/skip get none. Polite bump + same audit
+  finding + same mockup offer; passes `validateDraft` (opt-out line included).
+- `outreach.followup` job (scheduled by each send via queue `delayMs`)
+  re-screens EVERYTHING at fire time: DNC/unsubscribe first, then
+  `evaluateFollowUp` (status still `contacted`, tier, real angle, valid email,
+  no decisive reply — auto_reply doesn't count, ≤ `MAX_TOUCHES`=3 total).
+  Idempotent (same-sequence draft dedupe) + send-time cap re-check. Each
+  follow-up needs its own SEND_FIRST_TOUCH approval (shared gate, TODO(phase-e)
+  whether it gets its own).
+- `outreach.close` job (+14d after every send): silence after the last touch →
+  lead status `not_interested` (new LeadStatus). Negative replies also set
+  `not_interested` — any no/unsubscribe/bounce stops forever.
+- Priority (owner): warm replies > approved previews > strong new leads >
+  follow-ups > weak leads — follow-ups are single delayed per-lead jobs and
+  can never become the main job. Compliance delta review 7/7 PASS (advisory
+  B1: "already built a mockup" copy claim is owner-specified, kept verbatim).
 
 ### NEXT: Phase E (start here)
 

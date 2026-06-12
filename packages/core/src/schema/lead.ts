@@ -13,6 +13,8 @@ export const LeadStatus = z.enum([
   "replied",
   "opportunity",
   "customer",
+  // Said no, or 14+ days of silence after the final touch. No further outreach.
+  "not_interested",
   "disqualified",
   "do_not_contact",
 ]);

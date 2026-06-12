@@ -21,9 +21,14 @@ import type { ExecutionResult } from "@william/integrations";
 import { dirname, join } from "node:path";
 import { auditWebsite, qualityCheckPreview } from "@william/worker-site-auditor";
 import {
+  MAX_TOUCHES,
+  NO_RESPONSE_CLOSE_DAYS,
   OPT_OUT_LINE,
   classifyReply,
   createFirstTouchDraft,
+  createFollowUpDraft,
+  evaluateFollowUp,
+  nextFollowUp,
   recommendedNextStep,
   screenForContactability,
   validateDraft,
@@ -345,6 +350,19 @@ const handleSend: JobHandler = async (ctx, job) => {
     return;
   }
 
+  // Touch-cap re-check at send time: even duplicate approved follow-up drafts
+  // can never push a lead past MAX_TOUCHES total emails.
+  if (draft.variant.startsWith("followup-")) {
+    const sentCount = ctx.store.outreachDrafts
+      .list({ leadId: lead.id })
+      .filter((d) => d.status === "sent" || d.status === "sent_dry_run").length;
+    if (sentCount >= MAX_TOUCHES) {
+      ctx.store.outreachDrafts.save({ ...draft, status: "rejected" });
+      ctx.store.writeActivity(lead.id, "follow_up_skipped", `Send refused: already at ${sentCount} touches (max ${MAX_TOUCHES})`, { traceId: job.traceId });
+      return;
+    }
+  }
+
   // Instantly handoff (campaign) is the default send path; Gmail is fallback.
   const result = await ctx.integrations.instantly.pushLead(decision.ticket, {
     email: contact.email,
@@ -372,6 +390,128 @@ const handleSend: JobHandler = async (ctx, job) => {
   });
   setLeadStatus(ctx, lead, "contacted");
   ctx.store.writeActivity(lead.id, "outreach_sent", result.detail, { traceId: job.traceId, byApproval: true });
+
+  // Schedule the no-response follow-up check (first touch → #1 at ~3.5 days,
+  // follow-up #1 → #2 at ~9 days; nothing after #2). The check re-screens
+  // everything at fire time, so a reply/unsubscribe in the meantime wins.
+  const upcoming = nextFollowUp(draft.variant);
+  if (upcoming) {
+    ctx.store.queue.enqueue({
+      type: "outreach.followup",
+      payload: { leadId: lead.id, sequence: upcoming.sequence },
+      traceId: job.traceId,
+      leadId: lead.id,
+      delayMs: Math.round(upcoming.delayDays * 24 * 3600_000),
+    });
+  }
+  // Every send also schedules a close-out check: 14+ days of silence after
+  // the LAST touch marks the lead not interested (a later send supersedes).
+  ctx.store.queue.enqueue({
+    type: "outreach.close",
+    payload: { leadId: lead.id, sentAt: now },
+    traceId: job.traceId,
+    leadId: lead.id,
+    delayMs: NO_RESPONSE_CLOSE_DAYS * 24 * 3600_000,
+  });
+};
+
+/**
+ * Fires ~14 days after a send. Silence after the sequence has ended = the
+ * lead is marked not_interested and never contacted again. Follow-ups are
+ * not the main business — silent leads exit the pipeline cleanly.
+ */
+const handleOutreachClose: JobHandler = async (ctx, job) => {
+  const lead = ctx.store.leads.get(job.payload.leadId as string);
+  if (!lead || lead.status !== "contacted") return; // replied / converted / already closed
+  const decisive = ctx.store.replyEvents.list({ leadId: lead.id }).some((r) => r.intent !== "auto_reply");
+  if (decisive) return;
+  const sentAtCutoff = String(job.payload.sentAt ?? "");
+  const drafts = ctx.store.outreachDrafts.list({ leadId: lead.id });
+  // A later send scheduled its own close check; a follow-up still awaiting
+  // the owner's decision means the sequence isn't over yet.
+  if (drafts.some((d) => d.sentAt && d.sentAt > sentAtCutoff)) return;
+  if (drafts.some((d) => d.variant.startsWith("followup-") && d.status === "pending_approval")) return;
+  setLeadStatus(ctx, lead, "not_interested", `No response ${NO_RESPONSE_CLOSE_DAYS}+ days after last touch`);
+  ctx.store.writeActivity(
+    lead.id,
+    "lead_closed_no_response",
+    `No response ${NO_RESPONSE_CLOSE_DAYS}+ days after the last touch — marked not interested. No further outreach.`,
+    { traceId: job.traceId },
+  );
+};
+
+/**
+ * Delayed no-response check. Drafts a follow-up ONLY if the lead still
+ * qualifies (see evaluateFollowUp for the owner's keep/skip rules); every
+ * skip is recorded, and any follow-up still requires owner approval before
+ * it can send. Warm replies always win: a reply flips the lead off
+ * "contacted" status, which kills the sequence here.
+ */
+const handleFollowUp: JobHandler = async (ctx, job) => {
+  const lead = ctx.store.leads.get(job.payload.leadId as string);
+  if (!lead) return;
+  const sequence = (Number(job.payload.sequence) === 2 ? 2 : 1) as 1 | 2;
+  const skip = (reasons: string[]) =>
+    ctx.store.writeActivity(lead.id, "follow_up_skipped", `Follow-up #${sequence} skipped: ${reasons.join("; ")}`, { traceId: job.traceId });
+
+  // Absolute screen first — DNC/unsubscribe (incl. spam-complaint webhooks) win over everything.
+  const contact = ctx.store.contacts.list({ leadId: lead.id })[0] ?? null;
+  const screen = screenForContactability(ctx.store, lead.identityKeys, contact?.email);
+  if (screen.blocked) {
+    skip(screen.reasons);
+    return;
+  }
+
+  const drafts = ctx.store.outreachDrafts.list({ leadId: lead.id });
+  // Idempotency: a re-enqueued/retried job must never draft the same bump twice.
+  if (drafts.some((d) => d.variant === `followup-${sequence}`)) {
+    skip([`follow-up #${sequence} already drafted`]);
+    return;
+  }
+  const audit = ctx.store.audits.list({ leadId: lead.id })[0] ?? null;
+  const verdict = evaluateFollowUp({
+    lead,
+    score: ctx.store.leadScores.list({ leadId: lead.id })[0] ?? null,
+    audit,
+    contact,
+    replies: ctx.store.replyEvents.list({ leadId: lead.id }),
+    sequence,
+    priorTouchCount: drafts.filter(
+      (d) =>
+        d.status === "sent" ||
+        d.status === "sent_dry_run" ||
+        (d.variant.startsWith("followup-") && d.status === "pending_approval"),
+    ).length,
+  });
+  if (!verdict.eligible) {
+    skip(verdict.skipReasons);
+    return;
+  }
+
+  const company = ctx.store.companies.get(lead.companyId);
+  if (!company || !audit || !contact) {
+    skip(["draft inputs missing (company/audit/contact)"]);
+    return;
+  }
+  const draft = createFollowUpDraft({ lead, company, contact, audit, sequence, traceId: job.traceId });
+  const problems = validateDraft(draft);
+  if (problems.length > 0) throw new Error(`Follow-up draft failed content rules: ${problems.join(", ")}`);
+
+  // Same human-approval gate as every outbound outreach email — same risk
+  // class, per-draft approval. TODO(phase-e): decide whether follow-ups get a
+  // dedicated SEND_FOLLOW_UP gate; sharing means autopilot policy on
+  // SEND_FIRST_TOUCH covers follow-ups too (deliberate for now).
+  const approval = requestApproval(ctx, {
+    gate: "SEND_FIRST_TOUCH",
+    subjectType: "OutreachDraft",
+    subjectId: draft.id,
+    leadId: lead.id,
+    title: `Follow-up #${sequence} to ${contact.email} (${company.name})`,
+    detail: `Subject: ${draft.subject}\n\n${draft.body}`,
+    traceId: job.traceId,
+  });
+  ctx.store.outreachDrafts.insert({ ...draft, status: "pending_approval", approvalRequestId: approval.id });
+  ctx.store.writeActivity(lead.id, "follow_up_drafted", `Follow-up #${sequence} awaiting owner approval in Review Queue`, { traceId: job.traceId });
 };
 
 /** Processes an inbound reply (webhook or manual). Reply text is DATA, never instructions. */
@@ -469,7 +609,13 @@ const handleReply: JobHandler = async (ctx, job) => {
       break;
     }
     case "negative": {
-      setLeadStatus(ctx, lead, "replied");
+      // They said no — stop forever. Follow-ups and re-intake both respect this.
+      setLeadStatus(ctx, lead, "not_interested", "Lead declined by reply");
+      break;
+    }
+    case "auto_reply": {
+      // Out-of-office is not a response: leave the lead "contacted" so the
+      // follow-up sequence's timing is unaffected (per owner spec).
       break;
     }
     case "bounce": {
@@ -736,6 +882,8 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   "lead.contact": handleContact,
   "outreach.draft": handleDraft,
   "outreach.send": handleSend,
+  "outreach.followup": handleFollowUp,
+  "outreach.close": handleOutreachClose,
   "reply.process": handleReply,
   "preview.build": handlePreviewBuild,
   "site.revise": handleSiteRevise,

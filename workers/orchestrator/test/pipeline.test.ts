@@ -14,6 +14,7 @@ import {
 } from "../src/index";
 
 const futureClock = () => new Date(Date.now() + 10 * 60_000);
+const daysLater = (days: number) => () => new Date(Date.now() + days * 24 * 3600_000);
 
 let ctx: AppContext;
 beforeEach(() => {
@@ -165,6 +166,115 @@ describe("phase D: react builds, revision loop, production deploy", () => {
     expect(updated.status).toBe("approved_for_customer"); // NOT live
     const activity = ctx.store.activity.list({ leadId: project.leadId }).find((a) => a.kind === "deployed_production")!;
     expect(activity.message).toContain("SIMULATED");
+  });
+});
+
+describe("follow-up sequence (no response → 2 polite bumps, owner-approved)", () => {
+  /**
+   * Intake → audit → draft → grant → dry-run send, then pins the score tier
+   * (mock-audit tiers vary by domain hash; follow-up rules need determinism).
+   */
+  async function sendFirstTouch(name: string, tier: "hot" | "warm" | "cold" = "hot") {
+    ingestLead(ctx, lead(name, `https://${name.toLowerCase().replace(/\s+/g, "-")}.example.com`));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const approval = ctx.store.approvals.list({ status: "pending" })[0];
+    expect(approval).toBeDefined();
+    decideApproval(ctx, approval!.id, "granted", "test");
+    ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: approval!.subjectId }, traceId: approval!.traceId, leadId: approval!.leadId });
+    await runUntilEmpty(ctx, 100, futureClock);
+    const score = ctx.store.leadScores.list({ leadId: approval!.leadId! })[0]!;
+    ctx.store.leadScores.save({ ...score, tier });
+    return ctx.store.leads.get(approval!.leadId!)!;
+  }
+
+  it("a send schedules follow-up #1 ~3.5 days out; firing it drafts a polite bump for approval", async () => {
+    const l = await sendFirstTouch("Followup Barbers");
+    const scheduled = ctx.store.queue.list().find((j) => j.type === "outreach.followup");
+    expect(scheduled).toBeDefined();
+    expect(new Date(scheduled!.runAt).getTime()).toBeGreaterThan(Date.now() + 3 * 24 * 3600_000);
+
+    await runUntilEmpty(ctx, 100, daysLater(4)); // silence for 4 days
+    const followUp = ctx.store.outreachDrafts.list({ leadId: l.id }).find((d) => d.variant === "followup-1")!;
+    expect(followUp).toBeDefined();
+    expect(followUp.status).toBe("pending_approval");
+    expect(followUp.body).toMatch(/bump this/i);
+    expect(followUp.body).toContain("I'm not interested"); // opt-out line intact
+    // Nothing sent without the owner: still exactly one campaign sync (the first touch).
+    expect(ctx.store.campaignSyncs.count()).toBe(1);
+  });
+
+  it("approving follow-up #1 sends it (dry-run) and schedules #2 ~9 days out; #2 ends the chain", async () => {
+    const l = await sendFirstTouch("Chains Barbers", "hot"); // hot ⇒ two follow-ups
+    await runUntilEmpty(ctx, 100, daysLater(4));
+    const fu1 = ctx.store.outreachDrafts.list({ leadId: l.id }).find((d) => d.variant === "followup-1")!;
+    decideApproval(ctx, fu1.approvalRequestId!, "granted", "bump them");
+    ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: fu1.id }, traceId: fu1.traceId, leadId: l.id });
+    await runUntilEmpty(ctx, 100, daysLater(4));
+    expect(ctx.store.campaignSyncs.count()).toBe(2); // first touch + follow-up 1, both dry-run
+
+    const next = ctx.store.queue.list().find((j) => j.type === "outreach.followup" && j.status === "pending")!;
+    expect(next.payload.sequence).toBe(2);
+    await runUntilEmpty(ctx, 100, daysLater(14));
+    const fu2 = ctx.store.outreachDrafts.list({ leadId: l.id }).find((d) => d.variant === "followup-2")!;
+    expect(fu2.status).toBe("pending_approval");
+    expect(fu2.body).toMatch(/last note/i);
+    // After follow-up #2 there is nothing further to schedule.
+    decideApproval(ctx, fu2.approvalRequestId!, "granted", "final bump");
+    ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: fu2.id }, traceId: fu2.traceId, leadId: l.id });
+    await runUntilEmpty(ctx, 100, daysLater(14));
+    expect(ctx.store.queue.list().filter((j) => j.type === "outreach.followup" && j.status === "pending").length).toBe(0);
+  });
+
+  it("a reply before the follow-up fires kills the sequence — never bump a human who answered", async () => {
+    const l = await sendFirstTouch("Replied Barbers");
+    ctx.store.queue.enqueue({ type: "reply.process", payload: { leadId: l.id, text: "No thanks, we're all set.", provider: "manual" }, traceId: newTraceId(), leadId: l.id });
+    await runUntilEmpty(ctx, 100, futureClock);
+    await runUntilEmpty(ctx, 100, daysLater(5)); // follow-up job fires after the reply
+    expect(ctx.store.outreachDrafts.list({ leadId: l.id }).some((d) => d.variant.startsWith("followup"))).toBe(false);
+    const skipped = ctx.store.activity.list({ leadId: l.id }).find((a) => a.kind === "follow_up_skipped")!;
+    expect(skipped.message).toMatch(/status is 'not_interested'|already replied/);
+    // A "no" is forever: the lead is closed, not just paused.
+    expect(ctx.store.leads.get(l.id)!.status).toBe("not_interested");
+  });
+
+  it("medium-strength (warm) leads get exactly one follow-up", async () => {
+    const l = await sendFirstTouch("Warm Cut Barbers", "warm");
+    await runUntilEmpty(ctx, 100, daysLater(4));
+    const fu1 = ctx.store.outreachDrafts.list({ leadId: l.id }).find((d) => d.variant === "followup-1")!;
+    expect(fu1).toBeDefined();
+    decideApproval(ctx, fu1.approvalRequestId!, "granted", "one bump");
+    ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: fu1.id }, traceId: fu1.traceId, leadId: l.id });
+    await runUntilEmpty(ctx, 100, daysLater(4));
+    await runUntilEmpty(ctx, 100, daysLater(14)); // follow-up #2 check fires...
+    expect(ctx.store.outreachDrafts.list({ leadId: l.id }).some((d) => d.variant === "followup-2")).toBe(false);
+    const skipped = ctx.store.activity.list({ leadId: l.id }).find((a) => a.kind === "follow_up_skipped")!;
+    expect(skipped.message).toContain("one follow-up only");
+  });
+
+  it("14+ days of silence after the last touch closes the lead as not interested", async () => {
+    const l = await sendFirstTouch("Silent Barbers", "cold"); // weak: no follow-ups, just the close-out
+    await runUntilEmpty(ctx, 100, daysLater(15));
+    expect(ctx.store.leads.get(l.id)!.status).toBe("not_interested");
+    const closed = ctx.store.activity.list({ leadId: l.id }).find((a) => a.kind === "lead_closed_no_response")!;
+    expect(closed.message).toContain("not interested");
+    expect(ctx.store.campaignSyncs.count()).toBe(1); // and nothing else ever went out
+  });
+
+  it("the close-out never fires on a lead who replied", async () => {
+    const l = await sendFirstTouch("Engaged Barbers");
+    ctx.store.queue.enqueue({ type: "reply.process", payload: { leadId: l.id, text: "Sounds good, send the mockup!", provider: "manual" }, traceId: newTraceId(), leadId: l.id });
+    await runUntilEmpty(ctx, 100, futureClock);
+    await runUntilEmpty(ctx, 100, daysLater(15));
+    expect(ctx.store.leads.get(l.id)!.status).toBe("opportunity"); // untouched by the close job
+  });
+
+  it("an unsubscribe before the follow-up fires is absolute", async () => {
+    const l = await sendFirstTouch("Unsubbed Barbers");
+    ctx.store.queue.enqueue({ type: "reply.process", payload: { leadId: l.id, text: "unsubscribe", provider: "manual" }, traceId: newTraceId(), leadId: l.id });
+    await runUntilEmpty(ctx, 100, futureClock);
+    await runUntilEmpty(ctx, 100, daysLater(5));
+    expect(ctx.store.outreachDrafts.list({ leadId: l.id }).some((d) => d.variant.startsWith("followup"))).toBe(false);
+    expect(ctx.store.campaignSyncs.count()).toBe(1); // nothing new went out
   });
 });
 
