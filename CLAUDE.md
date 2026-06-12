@@ -94,14 +94,31 @@ touching policy, outreach content, billing, or deployment code.
 - Authed `GET /api/screenshots/:leadId/:file` (traversal-guarded); LeadDetail
   shows audit screenshots, Lighthouse scores, a11y findings, quality badges.
 
-### NEXT: Phase C (start here)
+### Done (Phase C — real adapters, 68 tests green)
 
-Goal: real adapters (instantly/gmail/stripe/vercel) behind the existing
-interfaces in packages/integrations; select by credential presence.
+- `packages/integrations/src/real/` — real Stripe (price→payment_link, draft
+  invoices, `stripeSignatureValid` t=/v1= scheme with replay protection),
+  Instantly v2 (pushLead; pauseLead endpoint TODO(phase-c) verify vs docs),
+  Gmail (OAuth2 refresh flow; opt-out line refused BEFORE the dry-run check),
+  Vercel (v13 inline-file deploys + rollback). Every method requires a
+  PolicyTicket and simulates on `ticket.dryRun` with zero network (tested).
+- `createIntegrations` selects real adapters by credential presence
+  (injectable env/fetchImpl for tests); mocks remain the fallback so CI/demo
+  are unchanged. Warns when a webhook secret is set without its API key
+  (mock scheme would reject real webhooks — fail-closed).
+- Webhook verification delegates to the ACTIVE adapter
+  (`ctx.integrations[provider].verifyWebhookSignature`); billing passes
+  `metadata.invoiceDraftId` so the Stripe webhook matches payments to drafts.
+- Failure details scrub key-shaped fragments (`sk_…` etc.). Compliance
+  review 6/6 PASS (advisories A1/A2 applied; A3 = Instantly TODO above).
+
+### NEXT: Phase D (start here)
+
+Goal: React+Framer Motion full builds (STACK_MODE=react in site-builder),
+revision loop, deploy approval flow — `TODO(phase-d)` in apps/api decide
+route (DEPLOY_PRODUCTION follow-through job now has a real Vercel adapter
+to call); promote `PREVIEW_QUALITY_THRESHOLDS` to config flags.
 
 ### Then
-- **Phase D** — React+Framer Motion full builds, revision loop, deploy
-  approval flow (`TODO(phase-d)` in apps/api decide route: DEPLOY_PRODUCTION
-  follow-through job).
 - **Phase E** — experiment engine, weekly reports, transcript/design-reference
   ingestion (adapter interface exists, mock only).

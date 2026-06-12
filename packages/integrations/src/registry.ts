@@ -11,6 +11,11 @@ import {
   createMockTranscripts,
   createMockVercel,
 } from "./mocks";
+import { createGmailAdapter } from "./real/gmail";
+import { createInstantlyAdapter } from "./real/instantly";
+import type { RealDeps } from "./real/shared";
+import { createStripeAdapter } from "./real/stripe";
+import { createVercelAdapter } from "./real/vercel";
 import type { Integrations } from "./types";
 
 export type IntegrationName =
@@ -50,16 +55,34 @@ export function detectCredentials(env: NodeJS.ProcessEnv, williamEnv: RuntimeCon
 }
 
 /**
- * Adapter factory. Phase A/B: mocks only. Real implementations land in
- * Phase C behind the same interfaces; selection will key off credential
- * presence + WILLIAM_ENV (TODO(phase-c): real adapters).
+ * Adapter factory. Credential presence selects the REAL adapter; everything
+ * else stays mock. Real adapters still simulate whenever ticket.dryRun is
+ * true (local env always is), so creds in a local .env remain side-effect
+ * free. github/enrichment/places/calendar/transcripts/higgsfield: mock until
+ * their phases (TODO(phase-d)/(phase-e)).
  */
-export function createIntegrations(_config: RuntimeConfig, log: Logger): Integrations {
+export function createIntegrations(
+  _config: RuntimeConfig,
+  log: Logger,
+  opts: { env?: NodeJS.ProcessEnv; fetchImpl?: typeof fetch } = {},
+): Integrations {
+  const env = opts.env ?? process.env;
+  const deps: RealDeps = { env, fetchImpl: opts.fetchImpl };
+  const gmailReady = !!(env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_REFRESH_TOKEN);
+  // Webhook verification scheme follows the ACTIVE adapter (keyed to the API
+  // key). A webhook secret without its API key means real provider webhooks
+  // get verified by the mock's scheme and fail closed — warn loudly.
+  if (env.STRIPE_WEBHOOK_SECRET && !env.STRIPE_SECRET_KEY) {
+    log.warn("STRIPE_WEBHOOK_SECRET is set without STRIPE_SECRET_KEY — real Stripe webhooks will be rejected (mock scheme active)");
+  }
+  if (env.INSTANTLY_WEBHOOK_SECRET && !env.INSTANTLY_API_KEY) {
+    log.warn("INSTANTLY_WEBHOOK_SECRET is set without INSTANTLY_API_KEY — Instantly webhooks verified by mock adapter");
+  }
   return {
-    email: createMockEmail(log),
-    instantly: createMockInstantly(log),
-    stripe: createMockStripe(log),
-    vercel: createMockVercel(log),
+    email: gmailReady ? createGmailAdapter(deps, log) : createMockEmail(log),
+    instantly: env.INSTANTLY_API_KEY ? createInstantlyAdapter(deps, log) : createMockInstantly(log),
+    stripe: env.STRIPE_SECRET_KEY ? createStripeAdapter(deps, log) : createMockStripe(log),
+    vercel: env.VERCEL_TOKEN ? createVercelAdapter(deps, log) : createMockVercel(log),
     github: createMockGithub(),
     enrichment: createMockEnrichment(),
     places: createMockPlaces(),

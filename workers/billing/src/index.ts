@@ -51,11 +51,16 @@ export async function executeInvoiceDraft(
 ): Promise<InvoiceDraft> {
   const result =
     draft.kind === "payment_link"
-      ? await stripe.createPaymentLink(ticket, { description: draft.description, amountUsd: draft.amountUsd })
+      ? await stripe.createPaymentLink(ticket, {
+          description: draft.description,
+          amountUsd: draft.amountUsd,
+          metadata: { invoiceDraftId: draft.id },
+        })
       : await stripe.createInvoiceDraft(ticket, {
           customerEmail,
           description: draft.description,
           amountUsd: draft.amountUsd,
+          metadata: { invoiceDraftId: draft.id },
         });
   return {
     ...draft,

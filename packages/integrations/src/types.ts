@@ -40,11 +40,12 @@ export interface StripeAdapter {
   readonly name: string;
   createPaymentLink(
     ticket: PolicyTicket,
-    input: { description: string; amountUsd: number },
+    /** metadata is copied onto Checkout Sessions — set invoiceDraftId so the webhook can match payments. */
+    input: { description: string; amountUsd: number; metadata?: Record<string, string> },
   ): Promise<ExecutionResult>;
   createInvoiceDraft(
     ticket: PolicyTicket,
-    input: { customerEmail: string; description: string; amountUsd: number },
+    input: { customerEmail: string; description: string; amountUsd: number; metadata?: Record<string, string> },
   ): Promise<ExecutionResult>;
   verifyWebhookSignature(rawBody: string, signatureHeader: string | undefined, secret: string | undefined): boolean;
 }

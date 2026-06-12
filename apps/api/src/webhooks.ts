@@ -1,6 +1,5 @@
 import { Router, raw } from "express";
 import { newId, newTraceId, nowIso } from "@william/core";
-import { hmacSignatureValid } from "@william/integrations";
 import type { AppContext } from "@william/worker-orchestrator";
 
 /**
@@ -60,7 +59,6 @@ export function webhookRoutes(ctx: AppContext): Router {
     const rawBody = (req.body as Buffer | undefined)?.toString("utf8") ?? "";
     const signature = req.header("stripe-signature");
     const secret = process.env.STRIPE_WEBHOOK_SECRET;
-    // TODO(phase-c): real Stripe signature scheme (t=...,v1=...) via stripe SDK.
     const verdict = verifySignature(ctx, "stripe", rawBody, signature, secret);
     if (!verdict.accept) {
       res.status(401).json({ error: "invalid_signature" });
@@ -110,7 +108,9 @@ function verifySignature(
   secret: string | undefined,
 ): { accept: boolean; signatureValid: boolean | null } {
   if (secret) {
-    const valid = hmacSignatureValid(rawBody, signature, secret);
+    // Verification is delegated to the ACTIVE adapter: mock = plain HMAC hex,
+    // real Stripe = t=...,v1=... scheme with replay protection.
+    const valid = ctx.integrations[provider].verifyWebhookSignature(rawBody, signature, secret);
     if (!valid) {
       ctx.store.writeCompliance("webhook_signature_invalid", `${provider} webhook rejected: bad/missing signature`, {});
     }
