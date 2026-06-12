@@ -72,7 +72,12 @@ packages/
   memory/           Runtime business memory: daily notes, durable lessons,
                     experiments, owner-request queue, recommendations
   templates/        Vertical starter kits (barbershop, fashion, photographer,
-                    coffee shop, restaurant) + template scoring/selection
+                    coffee shop, restaurant) + template scoring/selection +
+                    design-reference catalogue (style.refero.design,
+                    ui.aceternity.com, componentry.fun, manus.im, dotmatrix,
+                    21st.dev) and motion/stack principles (React + Framer
+                    Motion for Phase D builds; 3D scroll effects budgeted to
+                    hero + one section, reduced-motion safe)
 docs/               architecture.md (this file), setup.md, runbooks
 .claude/agents/     Build-time subagents (lead-researcher, site-auditor, …)
 data/               SQLite db + generated artifacts (gitignored)
