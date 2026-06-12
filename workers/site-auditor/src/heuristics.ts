@@ -1,0 +1,117 @@
+import type { WebsiteAudit, WebsiteWeakness } from "@william/core";
+
+export interface PageSignals {
+  html: string;
+  url: string;
+  loadMs: number | null;
+}
+
+export interface ExtractedSignals {
+  title: string | null;
+  contactEmails: string[];
+  phones: string[];
+  socialLinks: Record<string, string>;
+  ctas: string[];
+  services: string[];
+  trustSignals: string[];
+  hasViewportMeta: boolean;
+  hasTitleAndDescription: boolean;
+  imageCount: number;
+  imagesMissingAlt: number;
+  usesHttps: boolean;
+}
+
+const SOCIAL_HOSTS: Record<string, RegExp> = {
+  instagram: /instagram\.com\/[\w.\-/]+/i,
+  facebook: /facebook\.com\/[\w.\-/]+/i,
+  tiktok: /tiktok\.com\/@?[\w.\-/]+/i,
+  yelp: /yelp\.com\/biz\/[\w.\-/]+/i,
+  linkedin: /linkedin\.com\/(company|in)\/[\w.\-/]+/i,
+};
+
+const CTA_PATTERNS = /\b(book now|book online|order online|reserve|schedule|get a quote|contact us|call now|sign up|shop now)\b/gi;
+const TRUST_PATTERNS = /\b(testimonial|review|google reviews|5-star|five star|award|certified|since \d{4}|family owned)\b/gi;
+
+/** Extracts structured signals from raw page HTML — regex heuristics, no DOM. */
+export function extractSignals(page: PageSignals): ExtractedSignals {
+  const html = page.html;
+  const emails = [...new Set((html.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) ?? [])
+    .map((e) => e.toLowerCase())
+    .filter((e) => !/\.(png|jpg|jpeg|gif|webp|svg|css|js)$/.test(e) && !e.includes("example.")))];
+  const phones = [...new Set(html.match(/(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/g) ?? [])].slice(0, 3);
+  const socialLinks: Record<string, string> = {};
+  for (const [name, re] of Object.entries(SOCIAL_HOSTS)) {
+    const m = html.match(re);
+    if (m) socialLinks[name] = `https://${m[0].replace(/^https?:\/\//, "")}`;
+  }
+  const ctas = [...new Set((html.match(CTA_PATTERNS) ?? []).map((c) => c.toLowerCase()))];
+  const trustSignals = [...new Set((html.match(TRUST_PATTERNS) ?? []).map((t) => t.toLowerCase()))];
+  const imgTags = html.match(/<img\b[^>]*>/gi) ?? [];
+  const imagesMissingAlt = imgTags.filter((t) => !/\salt\s*=\s*["'][^"']+["']/i.test(t)).length;
+  const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+
+  return {
+    title: titleMatch?.[1]?.trim() || null,
+    contactEmails: emails.slice(0, 5),
+    phones,
+    socialLinks,
+    ctas,
+    services: extractServices(html),
+    trustSignals,
+    hasViewportMeta: /<meta[^>]+name=["']viewport["']/i.test(html),
+    hasTitleAndDescription: !!titleMatch && /<meta[^>]+name=["']description["']/i.test(html),
+    imageCount: imgTags.length,
+    imagesMissingAlt,
+    usesHttps: page.url.startsWith("https://"),
+  };
+}
+
+function extractServices(html: string): string[] {
+  // Headings often name services/menu items; crude but useful for personalization.
+  const headings = [...html.matchAll(/<h[23][^>]*>([^<]{3,60})<\/h[23]>/gi)].map((m) =>
+    m[1]!.replace(/\s+/g, " ").trim(),
+  );
+  return [...new Set(headings)].slice(0, 8);
+}
+
+/** Derives weaknesses + outreach angles from extracted signals. */
+export function deriveFindings(signals: ExtractedSignals, loadMs: number | null): {
+  weaknesses: WebsiteWeakness[];
+  outreachAngles: string[];
+  auditScore: number;
+} {
+  const weaknesses: WebsiteWeakness[] = [];
+  const angles: string[] = [];
+
+  if (!signals.usesHttps) {
+    weaknesses.push({ category: "technical", detail: "Site served over HTTP — browsers flag it 'Not secure'.", severity: "high" });
+    angles.push("their site shows a 'Not secure' warning to every visitor");
+  }
+  if (!signals.hasViewportMeta) {
+    weaknesses.push({ category: "mobile", detail: "No viewport meta tag — page is not mobile-optimized.", severity: "high" });
+    angles.push("their site doesn't adapt to phones, where most local searches happen");
+  }
+  if (!signals.hasTitleAndDescription) {
+    weaknesses.push({ category: "seo", detail: "Missing title/meta description — weak search appearance.", severity: "medium" });
+    angles.push("Google shows incomplete info for their business");
+  }
+  if (signals.ctas.length === 0) {
+    weaknesses.push({ category: "conversion", detail: "No clear call-to-action (book/order/contact).", severity: "high" });
+    angles.push("visitors have no obvious next step — no booking or contact button");
+  }
+  if (signals.trustSignals.length === 0) {
+    weaknesses.push({ category: "trust", detail: "No reviews/testimonials/credentials visible.", severity: "medium" });
+  }
+  if (signals.imageCount > 0 && signals.imagesMissingAlt / signals.imageCount > 0.5) {
+    weaknesses.push({ category: "accessibility", detail: `${signals.imagesMissingAlt}/${signals.imageCount} images missing alt text.`, severity: "low" });
+  }
+  if (loadMs != null && loadMs > 4000) {
+    weaknesses.push({ category: "performance", detail: `Homepage took ${(loadMs / 1000).toFixed(1)}s to load.`, severity: "high" });
+    angles.push(`their homepage takes ${(loadMs / 1000).toFixed(1)} seconds to load`);
+  }
+
+  // Audit score reflects how GOOD the site is (100 = excellent).
+  let score = 100;
+  for (const w of weaknesses) score -= w.severity === "high" ? 18 : w.severity === "medium" ? 10 : 4;
+  return { weaknesses, outreachAngles: angles.slice(0, 4), auditScore: Math.max(0, score) };
+}
