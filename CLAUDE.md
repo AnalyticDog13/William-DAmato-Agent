@@ -70,6 +70,10 @@ touching policy, outreach content, billing, or deployment code.
 
 ## Status — where we are and where to continue
 
+**`handoff.md` (repo root) is the live session-handoff log** — what's done,
+what works/doesn't, and next steps. Read it when resuming work, and keep it
+updated alongside this section after every phase or significant feature.
+
 ### Done (Phase A — complete, committed, pushed, 49 tests green)
 
 - Monorepo scaffold, all zod schemas, SQLite store + durable job queue
