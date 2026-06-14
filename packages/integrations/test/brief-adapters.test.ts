@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CompanyFacts, createLogger, type PolicyTicket } from "@william/core";
-import { createLlmAdapter, createMockFirecrawl, createMockLlm } from "../src";
+import { createFirecrawlAdapter, createLlmAdapter, createMockFirecrawl, createMockLlm } from "../src";
 
 const log = createLogger({ app: "test" }, () => {});
 
@@ -44,6 +44,64 @@ describe("firecrawl mock adapter", () => {
     const facts = await fc.scrapeCompany(ticket(true), "https://nothing.example.com");
     expect(CompanyFacts.parse(facts)).toEqual(facts); // schema-valid
     expect(facts.services).toEqual([]);
+  });
+});
+
+describe("firecrawl real adapter (scrape → CompanyFacts merge)", () => {
+  /** Fake fetch returning a Firecrawl /v1/scrape body, recording call count. */
+  function fakeFirecrawl(body: unknown, status = 200) {
+    const calls: string[] = [];
+    const impl = (async (url: string) => {
+      calls.push(url);
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  const scrapeBody = (metadata: Record<string, unknown>, markdown = "") => ({
+    success: true,
+    data: { markdown, links: [], metadata: { sourceURL: "https://x.example.com", statusCode: 200, ...metadata } },
+  });
+
+  it("simulates from hints on dry-run without touching the network", async () => {
+    const { impl, calls } = fakeFirecrawl(scrapeBody({ description: "ignored" }));
+    const fc = createFirecrawlAdapter({ env: { FIRECRAWL_API_KEY: "fc-test" }, fetchImpl: impl }, log);
+    const facts = await fc.scrapeCompany(ticket(true), "https://x.example.com", { companyName: "Fade Factory", niche: "barbershop" });
+    expect(calls.length).toBe(0);
+    expect(facts.about).toContain("Fade Factory");
+  });
+
+  it("maps metadata.description to about and fills missing contact from the page markdown", async () => {
+    const md = "Welcome to Fade Factory.\n\nCall us at (607) 555-0150 or email hello@fadefactory.example.com.";
+    const { impl } = fakeFirecrawl(scrapeBody({ title: "Fade Factory", description: "Ithaca's premier barbershop since 2009." }, md));
+    const fc = createFirecrawlAdapter({ env: { FIRECRAWL_API_KEY: "fc-test" }, fetchImpl: impl }, log);
+    const facts = await fc.scrapeCompany(ticket(false), "https://x.example.com"); // no hints → audit floor is empty
+    expect(facts.about).toBe("Ithaca's premier barbershop since 2009.");
+    expect(facts.contact.email).toBe("hello@fadefactory.example.com");
+    expect(facts.contact.phone).toContain("555-0150");
+    expect(CompanyFacts.parse(facts)).toEqual(facts); // still schema-valid
+  });
+
+  it("normalizes a metadata.description ARRAY to a single about string", async () => {
+    const { impl } = fakeFirecrawl(scrapeBody({ description: ["First sentence.", "Second sentence."] }));
+    const fc = createFirecrawlAdapter({ env: { FIRECRAWL_API_KEY: "fc-test" }, fetchImpl: impl }, log);
+    const facts = await fc.scrapeCompany(ticket(false), "https://x.example.com");
+    expect(facts.about).toBe("First sentence.");
+  });
+
+  it("never overrides an audit-confirmed contact with a scraped one", async () => {
+    const md = "Reach us at hello@scraped.example.com.";
+    const { impl } = fakeFirecrawl(scrapeBody({ description: "desc" }, md));
+    const fc = createFirecrawlAdapter({ env: { FIRECRAWL_API_KEY: "fc-test" }, fetchImpl: impl }, log);
+    const facts = await fc.scrapeCompany(ticket(false), "https://x.example.com", { contactEmails: ["audit@confirmed.example.com"] });
+    expect(facts.contact.email).toBe("audit@confirmed.example.com");
+  });
+
+  it("falls back to audit-derived synthesis on an HTTP error", async () => {
+    const { impl } = fakeFirecrawl("rate limited", 429);
+    const fc = createFirecrawlAdapter({ env: { FIRECRAWL_API_KEY: "fc-test" }, fetchImpl: impl }, log);
+    const facts = await fc.scrapeCompany(ticket(false), "https://x.example.com", { companyName: "Fallback Co", niche: "cafe" });
+    expect(facts.about).toContain("Fallback Co");
   });
 });
 

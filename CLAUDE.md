@@ -303,17 +303,34 @@ identical to before; no key needed).
 - **Compliance review PASS** on both deltas (advisories all INFO/no-action or the
   known activation-time re-review when the real path first runs in staging).
 
+### Done (Firecrawl mergeScrape finalized — 185 tests green)
+
+NEXT STEP #1's locally-buildable piece. The real `/v1/scrape` response shape was
+confirmed against Firecrawl docs and `mergeScrape` (`real/firecrawl.ts`) finalized:
+normalizes `metadata.title/description` (string OR array), sets `about` from the
+description (→ audit floor → markdown slice), and FILLS missing `contact.email`/
+`contact.phone` from the page markdown (audit-confirmed contacts are never
+overridden; request now `onlyMainContent:false` so footer contact survives).
+Result re-validated with `CompanyFacts.parse`; fail-closed to `synthesizeCompanyFacts`
+on any HTTP error. Contact extractors scan a bounded slice with a length-capped
+phone pattern (compliance advisory). Scraped text stays inert DATA fenced into the
+build prompt (invariant 1). The TODO is resolved. **Compliance review PASS**
+(1 LOW advisory applied; rest INFO). Real scraping still only runs in a non-local
+env with `FIRECRAWL_API_KEY` (local always dry-run → synth).
+
 ### NEXT STEPS (where to start next — all credential-gated, mock-first today)
 
 Everything below is built mock-first and simulates until a key arrives; none of
 it blocks. Rough priority:
 
 1. **Activate the LLM + scrape adapters** (`ANTHROPIC_API_KEY`, `FIRECRAWL_API_KEY`).
-   They're wired (`createIntegrations` selects real on key presence) but **local
-   is always dry-run → still templates/synth**. To exercise the real path you
-   need a non-local env (`WILLIAM_ENV=staging`) + the key. When the real
-   Firecrawl `/v1/scrape` shape is confirmed, finalize `mergeScrape`
-   (`real/firecrawl.ts` TODO) and re-run `compliance-reviewer` (text→prompt).
+   They're wired (`createIntegrations` selects real on key presence) and the
+   adapters are finalized (build-prompt/outreach/reply-classify/transcript on the
+   LLM side; `mergeScrape` on the scrape side) — but **local is always dry-run →
+   still templates/synth**. To exercise the real path you need a non-local env
+   (`WILLIAM_ENV=staging`) + the key, then re-run `compliance-reviewer` on the
+   live behavior (text→prompt) and confirm the real Firecrawl `about`/contact
+   extraction against actual pages.
 2. **Real repo/git-source Vercel deploy for `site.ship`** — today it dry-runs the
    repo URL through `vercel.deploy(sourcePath=repoUrl)`. Real shipping needs a
    Vercel token + git-source wiring (OwnerRequest exists). Verify Vercel

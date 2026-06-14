@@ -7,20 +7,21 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-14, after LLM-backed transcript extraction (NEXT STEP
-#4, second slice). Previous: LLM-assisted reply classification; Phase F.
+**Last updated:** 2026-06-14, after finalizing the Firecrawl `mergeScrape`
+(NEXT STEP #1's local piece). Previous: NEXT STEP #4 LLM features; Phase F.
 
 ## Current state
 
-- **180/180 tests green** (`npm test`), **typecheck clean** (`npm run typecheck`),
+- **185/185 tests green** (`npm test`), **typecheck clean** (`npm run typecheck`),
   **`npm run demo`** verified end-to-end on mocks (0 dead-letter jobs), **dashboard
   builds** (`npm run -w @william/dashboard build`).
-- **Compliance:** `compliance-reviewer` PASS on both NEXT-STEP-#4 deltas (reply
-  classification + transcript extraction; advisories all INFO/non-blocking).
-  Earlier: 8/8 PASS on the Phase F pivot and 8/8 on the Opus-outreach delta.
-- **Committed:** Phase F (`9e443db`), reply classification (`668e522`); Phases A–E
-  earlier (`53449b7` = Phase E). The **transcript-extraction** work is
-  **uncommitted** on branch `william-business-head` (awaiting go-ahead).
+- **Compliance:** `compliance-reviewer` PASS on all three recent deltas (reply
+  classification, transcript extraction, Firecrawl mergeScrape; advisories all
+  INFO/non-blocking or applied). Earlier: 8/8 on the Phase F pivot + Opus delta.
+- **Committed:** Phase F (`9e443db`), reply classification (`668e522`), transcript
+  extraction (`5a3143d`); Phases A–E earlier (`53449b7` = Phase E). The
+  **Firecrawl mergeScrape** work is **uncommitted** on branch
+  `william-business-head` (awaiting go-ahead).
 - **Repo hygiene (going public):** no secrets in anything tracked — `.env` and
   `data/` are gitignored, `.env.example` holds only placeholders, every key-shaped
   string in the diff is a test dummy. The owner's personal email was removed from
@@ -62,6 +63,15 @@ keyword extractor; `validTopics` now derived from the `DurableLesson` schema enu
 
 Mock-first throughout: local stays dry-run → behavior unchanged with no key.
 
+**Firecrawl mergeScrape** (uncommitted): NEXT STEP #1's local piece. Confirmed the
+real `/v1/scrape` shape and finalized `mergeScrape` (`real/firecrawl.ts`):
+normalizes `metadata.description` (string|array) → `about`, fills missing
+`contact.email`/`contact.phone` from page markdown (audit-confirmed contacts never
+overridden), `onlyMainContent:false` for footer contact, re-validated with
+`CompanyFacts.parse`, fail-closed to synth on HTTP error. Contact extractors scan
+a bounded slice with a length-capped phone pattern (advisory applied). Scraped
+text stays inert DATA. Real scraping still only runs in a non-local env + key.
+
 ## What's fixed / done last phase (Phase F — business-head pivot)
 
 Default `WILLIAM_BUILDS_WEBSITES=false`: William generates a build brief for the
@@ -100,10 +110,11 @@ owner and ships the owner's repo instead of building sites himself.
 
 All credential-gated; nothing blocks because it's mock-first. Priority order:
 
-1. **Activate Anthropic + Firecrawl** — wired, but local is always dry-run
-   (templates/synth). Real path needs `WILLIAM_ENV=staging` + the key. Confirm the
-   real Firecrawl `/v1/scrape` shape and finalize `mergeScrape` (TODO in
-   `real/firecrawl.ts`), then re-run `compliance-reviewer`.
+1. **Activate Anthropic + Firecrawl** — wired and the adapters are finalized
+   (LLM build-prompt/outreach/reply-classify/transcript + Firecrawl `mergeScrape`),
+   but local is always dry-run (templates/synth). Real path needs
+   `WILLIAM_ENV=staging` + the key; then re-run `compliance-reviewer` on the live
+   behavior and confirm real Firecrawl `about`/contact extraction against actual pages.
 2. **Real repo/git-source Vercel deploy for `site.ship`** (currently dry-runs the
    repo URL). Verify Vercel `framework:"vite"` + Instantly `pauseLead` with real keys.
 3. **Stripe test mode** — validate payment-link/invoice + webhook end to end.
