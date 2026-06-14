@@ -234,6 +234,11 @@ export function createMockLlm(log: Logger): LlmAdapter {
       // No real LLM: signal "keep your deterministic regex result" via null.
       return null;
     },
+    async extractTranscriptInsights(ticket) {
+      requireTicket(ticket, "llm.extractTranscriptInsights");
+      // No real LLM: signal "use your deterministic keyword extractor" via null.
+      return null;
+    },
   };
 }
 

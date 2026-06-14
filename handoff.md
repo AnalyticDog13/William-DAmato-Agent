@@ -7,20 +7,20 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-14, after LLM-assisted reply classification (NEXT STEP
-#4, first slice). Previous: Phase F (business-head pivot + Opus outreach).
+**Last updated:** 2026-06-14, after LLM-backed transcript extraction (NEXT STEP
+#4, second slice). Previous: LLM-assisted reply classification; Phase F.
 
 ## Current state
 
-- **174/174 tests green** (`npm test`), **typecheck clean** (`npm run typecheck`),
+- **180/180 tests green** (`npm test`), **typecheck clean** (`npm run typecheck`),
   **`npm run demo`** verified end-to-end on mocks (0 dead-letter jobs), **dashboard
   builds** (`npm run -w @william/dashboard build`).
-- **Compliance:** `compliance-reviewer` PASS on the reply-classification change
-  (3 advisories, all INFO/no-action or activation-time). Earlier: 8/8 PASS on the
-  Phase F pivot and 8/8 on the Opus-outreach delta.
-- **Phase F is committed** (`9e443db`); Phases A–E earlier (`53449b7` = Phase E).
-  The LLM-assisted reply-classification work is **uncommitted** on branch
-  `william-business-head` (awaiting the owner's go-ahead to commit).
+- **Compliance:** `compliance-reviewer` PASS on both NEXT-STEP-#4 deltas (reply
+  classification + transcript extraction; advisories all INFO/non-blocking).
+  Earlier: 8/8 PASS on the Phase F pivot and 8/8 on the Opus-outreach delta.
+- **Committed:** Phase F (`9e443db`), reply classification (`668e522`); Phases A–E
+  earlier (`53449b7` = Phase E). The **transcript-extraction** work is
+  **uncommitted** on branch `william-business-head` (awaiting go-ahead).
 - **Repo hygiene (going public):** no secrets in anything tracked — `.env` and
   `data/` are gitignored, `.env.example` holds only placeholders, every key-shaped
   string in the diff is a test dummy. The owner's personal email was removed from
@@ -39,22 +39,28 @@ approval → (simulated) send → reply classification → opportunity →
 intake/draft/send; follow-up sequence + 14-day close-out intact; experiments +
 reporting intact.
 
-## What's done this increment (LLM-assisted reply classification)
+## What's done these increments (NEXT STEP #4 — LLM features, mock-first)
 
-NEXT STEP #4, first slice. Spec:
-`docs/superpowers/specs/2026-06-14-llm-assisted-reply-classification-design.md`.
+Spec: `docs/superpowers/specs/2026-06-14-llm-assisted-reply-classification-design.md`.
 
-- Reply classification can now consult Opus, **but only for genuinely ambiguous
-  (`unknown`) replies**. The deterministic regex stays authoritative: any
-  confident label — including the compliance-critical `unsubscribe`/`bounce`/
-  `negative` stop signals — short-circuits before the LLM is reached, so the model
-  can never weaken a safety decision. Injection detection is regex-only and can't
-  be cleared by the model (ComplianceEvent path unchanged).
-- New `classifyReplyAssisted(text, assist?)` (`workers/outreach/src/classify.ts`),
-  new `llm.classifyReply` adapter method (mock → `null`; real `real/llm.ts` →
-  `null` on dry-run, else Anthropic with the reply fenced as untrusted DATA +
-  enum-validated parse). `handleReply` wires it on an operational ticket, minted
-  only for `unknown` replies. Mock-first: local stays dry-run → behavior unchanged.
+**Reply classification** (committed `668e522`): can now consult Opus, **but only
+for genuinely ambiguous (`unknown`) replies**. The deterministic regex stays
+authoritative — any confident label, including the compliance-critical
+`unsubscribe`/`bounce`/`negative` stop signals, short-circuits before the LLM, so
+the model can never weaken a safety decision. Injection detection is regex-only
+and can't be cleared by the model. New `classifyReplyAssisted(text, assist?)` +
+`llm.classifyReply` adapter (mock/dry-run → `null`, else Anthropic with the reply
+fenced as untrusted DATA + enum-validated parse); `handleReply` wires it on an
+operational ticket minted only for `unknown` replies.
+
+**Transcript extraction** (uncommitted): new `llm.extractTranscriptInsights`
+adapter method (mock/dry-run → `null`, else Anthropic with the transcript fenced
+as untrusted DATA → validated `{topic,insight}[]`, fail-closed to `null`).
+`handleTranscriptIngest` prefers the LLM result, falls back to the deterministic
+keyword extractor; `validTopics` now derived from the `DurableLesson` schema enum
+(advisory). Insights still become DurableLessons — inert, never executed.
+
+Mock-first throughout: local stays dry-run → behavior unchanged with no key.
 
 ## What's fixed / done last phase (Phase F — business-head pivot)
 
@@ -101,9 +107,10 @@ All credential-gated; nothing blocks because it's mock-first. Priority order:
 2. **Real repo/git-source Vercel deploy for `site.ship`** (currently dry-runs the
    repo URL). Verify Vercel `framework:"vite"` + Instantly `pauseLead` with real keys.
 3. **Stripe test mode** — validate payment-link/invoice + webhook end to end.
-4. **Remaining LLM features** — reply classification is **DONE** (this
-   increment); still left: transcript extraction + free-text revision
-   interpretation — quoted-material-to-label, **compliance review required**.
+4. **Remaining LLM features** — reply classification + transcript extraction are
+   **DONE**; only free-text revision interpretation is left, and it's dormant
+   while the self-builder is off (do it when re-enabling the builder).
+   Quoted-material-to-label, **compliance review required**.
 5. **Google Places lead sourcing** when the key lands.
 6. **Staging rehearsal** with sandbox creds + granted approvals.
 

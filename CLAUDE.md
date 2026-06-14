@@ -267,10 +267,10 @@ again, the four builder handlers run, and the three builder API routes work.
 Today's Phase A–D builder pipeline returns unchanged (kept under test by pinning
 those builder tests to the flag).
 
-### Done (LLM-assisted reply classification — 174 tests green)
+### Done (LLM-assisted reply classification + transcript extraction — 180 tests green)
 
 **Spec:** `docs/superpowers/specs/2026-06-14-llm-assisted-reply-classification-design.md`.
-First slice of NEXT STEP #4, mock-first (local always dry-run → behavior
+Two slices of NEXT STEP #4, both mock-first (local always dry-run → behavior
 identical to before; no key needed).
 
 - **Safety model (load-bearing):** the deterministic regex `classifyReply` stays
@@ -291,8 +291,17 @@ identical to before; no key needed).
 - **Wiring:** `handleReply` mints `operationalTicket(ctx, "llm.classifyReply", …)`
   inside the assist closure (only for `unknown` replies; no gate/whitelist change).
   All downstream routing is unchanged.
-- **Compliance review PASS** (3 advisories, all INFO/no-action or the known
-  activation-time re-review when the real path first runs in staging).
+- **Transcript extraction:** `llm.extractTranscriptInsights(ticket, {source,text})`
+  on `LlmAdapter` (mock → `null`; real → `null` on dry-run, else Anthropic with
+  `TRANSCRIPT_SYSTEM` fencing the transcript as untrusted DATA → `parseInsights`
+  returns a validated `{topic,insight}[]`, fail-closed to `null` on bad/empty
+  output). `handleTranscriptIngest` prefers the LLM result and falls back to the
+  deterministic keyword extractor; `validTopics` is now derived from
+  `DurableLesson.shape.topic.options` (can't drift). Insights still become
+  DurableLessons (topic coerced, `transcript:<source>` evidence) — inert, never
+  executed.
+- **Compliance review PASS** on both deltas (advisories all INFO/no-action or the
+  known activation-time re-review when the real path first runs in staging).
 
 ### NEXT STEPS (where to start next — all credential-gated, mock-first today)
 
@@ -312,9 +321,11 @@ it blocks. Rough priority:
 3. **Stripe test mode** (`STRIPE_SECRET_KEY` test key) — validate the full
    payment-link/invoice + webhook flow end to end.
 4. **Remaining LLM-backed features** behind the adapter: reply classification
-   (`classify.ts`) is **DONE** (see the section above) — still left: transcript
-   insight extraction and free-text revision interpretation — both
-   quoted-material-to-label, **compliance review required**.
+   (`classify.ts`) and transcript insight extraction (`handleTranscriptIngest`)
+   are **DONE** (see the section above) — only **free-text revision
+   interpretation** is left, and it's dormant while the self-builder is off
+   (`WILLIAM_BUILDS_WEBSITES=false`); do it when re-enabling the builder.
+   Quoted-material-to-label, **compliance review required**.
 5. **Real lead sourcing** (Google Places) when `GOOGLE_MAPS_API_KEY` arrives
    (also `ACTIVATE_NEW_LEAD_SOURCE`-gated).
 6. **Staging rehearsal**: `WILLIAM_ENV=staging` + sandbox creds + granted

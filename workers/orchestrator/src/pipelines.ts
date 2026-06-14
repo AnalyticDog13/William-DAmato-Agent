@@ -1,4 +1,5 @@
 import {
+  DurableLesson,
   companyIdentityKey,
   identityKeys,
   newId,
@@ -1218,11 +1219,19 @@ const handleBillingExecute: JobHandler = async (ctx, job) => {
 const handleTranscriptIngest: JobHandler = async (ctx, job) => {
   const source = String(job.payload.source ?? "unknown");
   const text = String(job.payload.text ?? "");
-  const insights = await ctx.integrations.transcripts.extractInsights({ source, text });
+  // Prefer the LLM extractor when available; the transcript text enters the
+  // prompt strictly as quoted data (invariant 1). The mock and the real adapter
+  // under dry-run (always local) return null, so local falls back to the
+  // deterministic keyword extractor — behavior unchanged with no key.
+  const ticket = operationalTicket(ctx, "llm.extractTranscriptInsights", { type: "Transcript", id: source, leadId: null }, job.traceId);
+  const insights =
+    (await ctx.integrations.llm.extractTranscriptInsights(ticket, { source, text })) ??
+    (await ctx.integrations.transcripts.extractInsights({ source, text }));
 
-  const validTopics = new Set(["outreach", "auditing", "templates", "design", "pricing", "process", "integration", "other"] as const);
+  // Derived from the schema enum so the two can never drift (advisory).
+  const validTopics = new Set<string>(DurableLesson.shape.topic.options);
   for (const insight of insights) {
-    const topic = (validTopics.has(insight.topic as never) ? insight.topic : "other") as Parameters<typeof ctx.memory.addLesson>[0]["topic"];
+    const topic = (validTopics.has(insight.topic) ? insight.topic : "other") as Parameters<typeof ctx.memory.addLesson>[0]["topic"];
     ctx.memory.addLesson({ topic, lesson: insight.insight, evidence: [`transcript:${source}`] });
   }
   ctx.store.writeAudit({

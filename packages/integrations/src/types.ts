@@ -189,6 +189,19 @@ export interface ReplyClassifyResult {
   confidence: number;
 }
 
+/** Input for LLM-backed transcript insight extraction. The transcript text is
+ * QUOTED MATERIAL the model summarizes — never instructions (invariant 1). */
+export interface TranscriptInsightRequest {
+  source: string;
+  text: string;
+}
+
+/** One extracted lesson: a topic bucket + the insight text. */
+export interface TranscriptInsight {
+  topic: string;
+  insight: string;
+}
+
 export interface LlmAdapter {
   readonly name: string;
   /** Generates the owner's website build prompt. Operational ticket required;
@@ -210,6 +223,15 @@ export interface LlmAdapter {
    * reply text is passed strictly as quoted material to label (invariant 1).
    */
   classifyReply(ticket: PolicyTicket, input: ReplyClassifyRequest): Promise<ReplyClassifyResult | null>;
+  /**
+   * Extracts durable design/process lessons from an owner-provided transcript or
+   * note. Operational ticket required. Returns null when no LLM is available (the
+   * mock, and the real adapter under ticket.dryRun) OR when the model returns no
+   * usable insights — the caller then falls back to the deterministic keyword
+   * extractor. The transcript text is passed strictly as quoted material to
+   * summarize (invariant 1).
+   */
+  extractTranscriptInsights(ticket: PolicyTicket, input: TranscriptInsightRequest): Promise<TranscriptInsight[] | null>;
 }
 
 export interface Integrations {

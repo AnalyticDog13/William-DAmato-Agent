@@ -761,6 +761,24 @@ describe("transcript ingestion", () => {
     expect(audit).toBeDefined();
     expect(audit!.detail).toContain("0 insight");
   });
+
+  it("uses LLM-extracted insights when available, over the deterministic baseline", async () => {
+    // Inject an LLM extractor (the mock returns null → deterministic keyword pass).
+    ctx.integrations.llm.extractTranscriptInsights = async () => [
+      { topic: "pricing", insight: "Owner wants to anchor builds at $750" },
+    ];
+    ctx.store.queue.enqueue({
+      type: "ingest.transcript",
+      // Smalltalk the deterministic keyword extractor would find NOTHING in.
+      payload: { source: "sales-call.txt", text: "hi\nok\nbye" },
+      traceId: newTraceId(),
+    });
+    await runUntilEmpty(ctx, 50, futureClock);
+    const lessons = ctx.store.lessons.list({ skey: "pricing" });
+    expect(lessons.length).toBe(1);
+    expect(lessons[0]!.lesson).toContain("$750");
+    expect(lessons[0]!.evidence.join()).toContain("sales-call.txt");
+  });
 });
 
 describe("weekly report", () => {

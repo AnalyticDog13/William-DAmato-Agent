@@ -163,3 +163,61 @@ describe("llm adapter (reply classification)", () => {
     expect((await llm.classifyReply(ticket(false), { text: "no thanks, we built our own" }))?.intent).toBe("negative");
   });
 });
+
+describe("llm adapter (transcript insight extraction)", () => {
+  function fakeAnthropic(text: string, status = 200) {
+    const calls: string[] = [];
+    const impl = (async (url: string) => {
+      calls.push(url);
+      return new Response(JSON.stringify({ content: [{ type: "text", text }] }), { status });
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  const req = { source: "design-call.txt", text: "We talked about bold hero sections and anchoring price at $750." };
+
+  it("mock returns null (caller keeps the deterministic extractor) and requires a ticket", async () => {
+    const llm = createMockLlm(log);
+    await expect(llm.extractTranscriptInsights(undefined as unknown as PolicyTicket, req)).rejects.toThrow(/SECURITY/);
+    expect(await llm.extractTranscriptInsights(ticket(true), req)).toBeNull();
+  });
+
+  it("real adapter returns null under dry-run without touching the network", async () => {
+    const { impl, calls } = fakeAnthropic("[]");
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-ant-test" }, fetchImpl: impl }, log);
+    expect(await llm.extractTranscriptInsights(ticket(true), req)).toBeNull();
+    expect(calls.length).toBe(0);
+  });
+
+  it("real adapter parses a JSON array of {topic, insight} from the model response", async () => {
+    const { impl } = fakeAnthropic(
+      JSON.stringify([
+        { topic: "design", insight: "Use a bold, full-bleed hero section" },
+        { topic: "pricing", insight: "Anchor builds at $750" },
+      ]),
+    );
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-ant-test" }, fetchImpl: impl }, log);
+    const res = await llm.extractTranscriptInsights(ticket(false), req);
+    expect(res).toHaveLength(2);
+    expect(res?.[0]).toEqual({ topic: "design", insight: "Use a bold, full-bleed hero section" });
+  });
+
+  it("real adapter drops malformed entries and keeps the valid ones", async () => {
+    const { impl } = fakeAnthropic(
+      JSON.stringify([{ topic: "design", insight: "Keep it mobile-first" }, { topic: "design" }, { insight: "" }, "nope"]),
+    );
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-ant-test" }, fetchImpl: impl }, log);
+    const res = await llm.extractTranscriptInsights(ticket(false), req);
+    expect(res).toEqual([{ topic: "design", insight: "Keep it mobile-first" }]);
+  });
+
+  it("real adapter returns null on a non-array body, empty array, or HTTP error", async () => {
+    const bad = fakeAnthropic('{"not":"an array"}');
+    const empty = fakeAnthropic("[]");
+    const err = fakeAnthropic("[]", 500);
+    const env = { ANTHROPIC_API_KEY: "sk-ant-test" };
+    expect(await createLlmAdapter({ env, fetchImpl: bad.impl }, log).extractTranscriptInsights(ticket(false), req)).toBeNull();
+    expect(await createLlmAdapter({ env, fetchImpl: empty.impl }, log).extractTranscriptInsights(ticket(false), req)).toBeNull();
+    expect(await createLlmAdapter({ env, fetchImpl: err.impl }, log).extractTranscriptInsights(ticket(false), req)).toBeNull();
+  });
+});
