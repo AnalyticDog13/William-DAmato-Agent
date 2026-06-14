@@ -1,6 +1,8 @@
+import { loadDotEnv } from "@william/core";
 import { createContext, ensureBootstrapOwnerRequests } from "@william/worker-orchestrator";
 import { createServer } from "./server";
 
+loadDotEnv(); // read .env (repo root) before config; no-op if absent
 const ctx = createContext();
 ensureBootstrapOwnerRequests(ctx);
 const app = createServer(ctx);

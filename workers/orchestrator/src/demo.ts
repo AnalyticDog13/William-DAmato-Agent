@@ -20,6 +20,9 @@ import { seedDemoData } from "./seed";
 const futureClock = () => new Date(Date.now() + 10 * 60_000); // hop over retry backoff
 
 async function main(): Promise<void> {
+  // NOTE: the demo deliberately does NOT load .env — it is a hermetic dry-run
+  // showcase ("no external call leaves the machine"). Real creds/staging belong
+  // to the worker/api/seed entry points, not here.
   // Fresh demo database every run.
   const dataDir = process.env.DATA_DIR ?? "./data";
   for (const f of ["william.db", "william.db-wal", "william.db-shm"]) {

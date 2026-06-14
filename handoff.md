@@ -7,12 +7,17 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-14, after finalizing the Firecrawl `mergeScrape`
-(NEXT STEP #1's local piece). Previous: NEXT STEP #4 LLM features; Phase F.
+**Last updated:** 2026-06-14, after wiring `.env` auto-loading + adding the
+Higgsfield build-prompt note. Previous: Firecrawl `mergeScrape`; NEXT STEP #4.
 
 ## Current state
 
-- **185/185 tests green** (`npm test`), **typecheck clean** (`npm run typecheck`),
+- **`.env` now auto-loads** at the worker/api/seed entry points (`loadDotEnv` in
+  `packages/core/src/env.ts`, Node built-in, no dep). Put `.env` at the **repo
+  root** (it's there, gitignored). Local still forces dry-run regardless. The
+  demo stays hermetic (does NOT read `.env`). Build prompts now also require
+  **Higgsfield** for visual assets (one line in template + `BUILD_PROMPT_SYSTEM`).
+- **187/187 tests green** (`npm test`), **typecheck clean** (`npm run typecheck`),
   **`npm run demo`** verified end-to-end on mocks (0 dead-letter jobs), **dashboard
   builds** (`npm run -w @william/dashboard build`).
 - **Compliance:** `compliance-reviewer` PASS on all three recent deltas (reply

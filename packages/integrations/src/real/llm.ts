@@ -294,6 +294,7 @@ const BUILD_PROMPT_SYSTEM = [
   "Every build prompt you write MUST require that the resulting website is:",
   "- awwward-winning worthy (bold, modern art direction with tasteful, performant motion), and",
   "- mobile-friendly, fully interactive, and fully working on mobile (mobile-first, every interaction usable on a phone).",
+  "Every build prompt MUST instruct the builder to generate the hero, gallery, and other visual/motion assets with Higgsfield (AI image/video generation) so the imagery is bespoke and on-brand rather than generic stock.",
   "Recommend an animation-forward stack (React + Vite, Three.js, GSAP, Framer Motion).",
 ].join("\n");
 

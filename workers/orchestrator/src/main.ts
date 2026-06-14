@@ -1,9 +1,11 @@
 /** Continuous orchestrator worker: processes the durable queue and writes the daily report at day rollover. */
+import { loadDotEnv } from "@william/core";
 import { createContext } from "./context";
 import { ensureBootstrapOwnerRequests } from "./ownerRequests";
 import { generateDailyReport, generateWeeklyReport } from "./reports";
 import { runForever, processOne } from "./runner";
 
+loadDotEnv(); // read .env (repo root) before config; no-op if absent
 const ctx = createContext();
 ensureBootstrapOwnerRequests(ctx);
 

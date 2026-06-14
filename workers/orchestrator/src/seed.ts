@@ -1,5 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { newId, nowIso } from "@william/core";
+import { loadDotEnv, newId, nowIso } from "@william/core";
 import { ingestLead, type LeadInput } from "./pipelines";
 import { ensureBootstrapOwnerRequests } from "./ownerRequests";
 import { createContext, type AppContext } from "./context";
@@ -84,6 +84,7 @@ export function seedDemoData(ctx: AppContext): SeedSummary {
 
 // `npm run seed` — seed the persistent database without running the pipeline.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  loadDotEnv(); // read .env (repo root) before config; no-op if absent
   const summary = seedDemoData(createContext());
   console.log(`Seeded: ${summary.created} created, ${summary.duplicates} duplicates, ${summary.blocked} blocked.`);
   console.log(`Run 'npm run worker' to process the queued jobs.`);

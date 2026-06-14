@@ -229,9 +229,11 @@ flag, not deleted.
   `ANTHROPIC_API_KEY`). Both ride operational tickets, simulate on `ticket.dryRun`
   (zero network in local), and fall back to the template on failure. Shared
   `brief-prompt.ts` builds the prompt; the owner-required notes
-  (**mobile-friendly + interactive + fully working on mobile**, and
-  **awwward-winning worthy**) are baked into every prompt. Wired into
-  `detectCredentials` (`firecrawl`, `anthropic`) + `createIntegrations`.
+  (**mobile-friendly + interactive + fully working on mobile**,
+  **awwward-winning worthy**, and **generate visual/motion assets with
+  Higgsfield**) are baked into every prompt (both the template and
+  `BUILD_PROMPT_SYSTEM`). Wired into `detectCredentials` (`firecrawl`,
+  `anthropic`) + `createIntegrations`.
 - **`brief.generate` job** (`handleBriefGenerate`): audit weaknesses + scrape →
   LLM build-prompt → insert `WebsiteBrief(ready)` → owner notification.
 - **`site.ship` job** (`handleSiteShip`): granted `DEPLOY_PRODUCTION` (subject =
@@ -317,6 +319,19 @@ phone pattern (compliance advisory). Scraped text stays inert DATA fenced into t
 build prompt (invariant 1). The TODO is resolved. **Compliance review PASS**
 (1 LOW advisory applied; rest INFO). Real scraping still only runs in a non-local
 env with `FIRECRAWL_API_KEY` (local always dry-run → synth).
+
+### Done (.env auto-loading + Higgsfield build note — 187 tests green)
+
+- **`.env` now loads automatically** at the runnable entry points. New
+  `loadDotEnv(path=".env")` in `packages/core/src/env.ts` (Node's built-in
+  `process.loadEnvFile`, no dependency) is called first in `workers/orchestrator/
+  src/main.ts`, `apps/api/src/main.ts`, and `seed.ts`. NOT in `loadConfig` (tests
+  stay hermetic) and deliberately NOT in `demo.ts` (the demo stays a hermetic
+  dry-run). Put `.env` at the repo root; `loadConfig` still forces dry-run in
+  local regardless of its contents (invariant 3 intact). Compliance PASS.
+- **Build prompts now require Higgsfield** for visual/motion asset generation —
+  one owner-required sentence added to both `templateBuildPrompt` and
+  `BUILD_PROMPT_SYSTEM` (static instruction text; no untrusted-data path).
 
 ### NEXT STEPS (where to start next — all credential-gated, mock-first today)
 

@@ -1,4 +1,19 @@
+import { existsSync } from "node:fs";
+
 export type WilliamEnv = "local" | "staging" | "production";
+
+/**
+ * Load environment variables from a `.env` file (default: `./.env` from the
+ * current working directory) into `process.env`, using Node's built-in loader
+ * (no dependency). Call ONCE at the very start of each runnable entry point
+ * (worker / api / demo / seed) BEFORE `loadConfig`/`createContext` — never inside
+ * `loadConfig`, so the test suite stays hermetic. A missing file is a no-op:
+ * credentials are optional and the system stays in dry-run with mock adapters
+ * until real values exist (Blocked ≠ stuck).
+ */
+export function loadDotEnv(path = ".env"): void {
+  if (existsSync(path)) process.loadEnvFile(path);
+}
 
 export interface RuntimeConfig {
   env: WilliamEnv;

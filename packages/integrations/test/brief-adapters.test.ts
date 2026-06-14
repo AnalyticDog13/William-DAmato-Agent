@@ -131,6 +131,8 @@ describe("llm mock adapter (build-prompt generation)", () => {
     expect(res.buildPrompt).toMatch(/mobile/i);
     expect(res.buildPrompt).toMatch(/interactive/i);
     expect(res.buildPrompt).toMatch(/awwward/i);
+    // owner-required: generate visual assets with Higgsfield
+    expect(res.buildPrompt).toMatch(/Higgsfield/i);
     // quotes the real business + audit findings as material to transform
     expect(res.buildPrompt).toContain("Fade Factory");
     expect(res.buildPrompt).toContain("No mobile layout");

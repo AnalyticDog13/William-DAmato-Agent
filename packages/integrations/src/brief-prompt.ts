@@ -64,6 +64,7 @@ export function templateBuildPrompt(input: BuildPromptRequest): BuildPromptResul
     "  interaction (nav, animations, forms, 3D/scroll effects) on small touch screens, and never ship a layout that",
     "  breaks or a control that is unusable on a phone.",
     "- Fast: lazy-load heavy assets, respect `prefers-reduced-motion`, keep Lighthouse performance and accessibility high.",
+    "- Generate the hero, gallery, and other visual/motion assets with **Higgsfield** (AI image/video generation) so the imagery is bespoke and on-brand rather than generic stock.",
     "",
     "## Recommended stack",
     `- Libraries: ${stack.libs.join(", ")}`,

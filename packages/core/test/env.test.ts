@@ -1,5 +1,8 @@
+import { writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "../src/env";
+import { loadConfig, loadDotEnv } from "../src/env";
 
 describe("loadConfig flags", () => {
   it("defaults: static stack, 70/80 preview thresholds, local forces dry-run", () => {
@@ -33,5 +36,24 @@ describe("loadConfig flags", () => {
     expect(loadConfig({ WILLIAM_BUILDS_WEBSITES: "true" }).williamBuildsWebsites).toBe(true);
     expect(loadConfig({ WILLIAM_BUILDS_WEBSITES: "false" }).williamBuildsWebsites).toBe(false);
     expect(loadConfig({ WILLIAM_BUILDS_WEBSITES: "1" }).williamBuildsWebsites).toBe(false);
+  });
+});
+
+describe("loadDotEnv", () => {
+  it("loads variables from a .env file into process.env", () => {
+    const file = join(tmpdir(), `william-dotenv-${Date.now()}.env`);
+    writeFileSync(file, "WILLIAM_DOTENV_PROBE=loaded-from-file\n");
+    try {
+      delete process.env.WILLIAM_DOTENV_PROBE;
+      loadDotEnv(file);
+      expect(process.env.WILLIAM_DOTENV_PROBE).toBe("loaded-from-file");
+    } finally {
+      delete process.env.WILLIAM_DOTENV_PROBE;
+      rmSync(file, { force: true });
+    }
+  });
+
+  it("is a no-op (no throw) when the file does not exist", () => {
+    expect(() => loadDotEnv(join(tmpdir(), "william-nonexistent-xyz.env"))).not.toThrow();
   });
 });
