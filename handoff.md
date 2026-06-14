@@ -18,17 +18,19 @@
 - **Compliance:** `compliance-reviewer` PASS on all three recent deltas (reply
   classification, transcript extraction, Firecrawl mergeScrape; advisories all
   INFO/non-blocking or applied). Earlier: 8/8 on the Phase F pivot + Opus delta.
-- **Committed:** Phase F (`9e443db`), reply classification (`668e522`), transcript
-  extraction (`5a3143d`); Phases A–E earlier (`53449b7` = Phase E). The
-  **Firecrawl mergeScrape** work is **uncommitted** on branch
-  `william-business-head` (awaiting go-ahead).
-- **Repo hygiene (going public):** no secrets in anything tracked — `.env` and
+- **Committed:** Phase F (`f10ceae`), reply classification (`1664346`), transcript
+  extraction (`3c0380c`), Firecrawl mergeScrape (`31bc216`); Phases A–E earlier
+  (`a47b737` = Phase E). (SHAs reflect the 2026-06-14 history rewrite below.)
+- **Repo hygiene (public repo):** no secrets in anything tracked — `.env` and
   `data/` are gitignored, `.env.example` holds only placeholders, every key-shaped
-  string in the diff is a test dummy. The owner's personal email was removed from
-  the spec doc in the working tree. **Caveat:** that email still exists in git
-  history (commit `0ac1c3a`); scrub history (e.g. `git filter-repo`) before/at the
-  moment of making the repo public if that matters. (`will@williamdamato.com`
-  throughout is the intentional business sender identity, fine to be public.)
+  string in the diff is a test dummy. **Personal email scrubbed:** on 2026-06-14
+  every commit's author/committer email (was the owner's personal gmail, already
+  public on `main`) was rewritten to `AnalyticDog13@users.noreply.github.com` via
+  `git filter-branch` across all refs, then force-pushed; `git config user.email`
+  is set to the no-reply address for future commits. (Old commit SHAs may persist
+  in GitHub's cache/API and any forks for a while — true removal isn't guaranteed
+  without GitHub support.) (`will@williamdamato.com` throughout is the intentional
+  business sender identity, fine to be public.)
 
 ## What's working (the whole pipeline, mock-first, zero credentials)
 
@@ -44,7 +46,7 @@ reporting intact.
 
 Spec: `docs/superpowers/specs/2026-06-14-llm-assisted-reply-classification-design.md`.
 
-**Reply classification** (committed `668e522`): can now consult Opus, **but only
+**Reply classification** (committed `1664346`): can now consult Opus, **but only
 for genuinely ambiguous (`unknown`) replies**. The deterministic regex stays
 authoritative — any confident label, including the compliance-critical
 `unsubscribe`/`bounce`/`negative` stop signals, short-circuits before the LLM, so
