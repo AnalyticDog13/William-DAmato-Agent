@@ -267,6 +267,33 @@ again, the four builder handlers run, and the three builder API routes work.
 Today's Phase A–D builder pipeline returns unchanged (kept under test by pinning
 those builder tests to the flag).
 
+### Done (LLM-assisted reply classification — 174 tests green)
+
+**Spec:** `docs/superpowers/specs/2026-06-14-llm-assisted-reply-classification-design.md`.
+First slice of NEXT STEP #4, mock-first (local always dry-run → behavior
+identical to before; no key needed).
+
+- **Safety model (load-bearing):** the deterministic regex `classifyReply` stays
+  AUTHORITATIVE. New `classifyReplyAssisted(text, assist?)` (`workers/outreach/
+  src/classify.ts`) consults the LLM **only when the regex returns `unknown`** —
+  any confident label (incl. the compliance-critical `unsubscribe`/`bounce`/
+  `negative`) short-circuits first, so the model can NEVER override a stop signal.
+  Upgrading an `unknown` to a stop signal is allowed (fail-closed-good). Injection
+  detection is NOT delegated: `instructionAttemptDetected` comes only from the
+  regex and the LLM can never clear it (ComplianceEvent path unchanged).
+- **Adapter:** `llm.classifyReply(ticket, {text})` on `LlmAdapter` (mirrors
+  `generateOutreachCopy`'s null-fallback). Mock → `null`; real (`real/llm.ts`)
+  → `null` on `ticket.dryRun` (zero network locally), else Anthropic call with
+  `CLASSIFY_SYSTEM` (reply fenced as untrusted DATA, invariant 1) → `parseIntentLabel`
+  validates against the `ReplyIntent` zod enum; model `unknown`/non-enum/`!ok` →
+  `null` (caller keeps the regex result). `LLM_ASSIST_CONFIDENCE=0.6` is
+  informational only — never gates a decision.
+- **Wiring:** `handleReply` mints `operationalTicket(ctx, "llm.classifyReply", …)`
+  inside the assist closure (only for `unknown` replies; no gate/whitelist change).
+  All downstream routing is unchanged.
+- **Compliance review PASS** (3 advisories, all INFO/no-action or the known
+  activation-time re-review when the real path first runs in staging).
+
 ### NEXT STEPS (where to start next — all credential-gated, mock-first today)
 
 Everything below is built mock-first and simulates until a key arrives; none of
@@ -285,8 +312,9 @@ it blocks. Rough priority:
 3. **Stripe test mode** (`STRIPE_SECRET_KEY` test key) — validate the full
    payment-link/invoice + webhook flow end to end.
 4. **Remaining LLM-backed features** behind the adapter: reply classification
-   (`classify.ts`), transcript insight extraction, free-text revision
-   interpretation — all quoted-material-to-label, **compliance review required**.
+   (`classify.ts`) is **DONE** (see the section above) — still left: transcript
+   insight extraction and free-text revision interpretation — both
+   quoted-material-to-label, **compliance review required**.
 5. **Real lead sourcing** (Google Places) when `GOOGLE_MAPS_API_KEY` arrives
    (also `ACTIVATE_NEW_LEAD_SOURCE`-gated).
 6. **Staging rehearsal**: `WILLIAM_ENV=staging` + sandbox creds + granted

@@ -105,3 +105,61 @@ describe("llm adapter (outreach copy)", () => {
     expect(await llm.generateOutreachCopy(ticket(true), outreachReq)).toBeNull();
   });
 });
+
+describe("llm adapter (reply classification)", () => {
+  /** Fake fetch returning one Anthropic-shaped text block, recording call count. */
+  function fakeAnthropic(text: string, status = 200) {
+    const calls: string[] = [];
+    const impl = (async (url: string) => {
+      calls.push(url);
+      return new Response(JSON.stringify({ content: [{ type: "text", text }] }), { status });
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  it("mock returns null (caller keeps the regex result) and requires a ticket", async () => {
+    const llm = createMockLlm(log);
+    await expect(llm.classifyReply(undefined as unknown as PolicyTicket, { text: "hi" })).rejects.toThrow(/SECURITY/);
+    expect(await llm.classifyReply(ticket(true), { text: "hi" })).toBeNull();
+  });
+
+  it("real adapter returns null under dry-run without touching the network", async () => {
+    const { impl, calls } = fakeAnthropic("positive");
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-ant-test" }, fetchImpl: impl }, log);
+    expect(await llm.classifyReply(ticket(true), { text: "maybe later" })).toBeNull();
+    expect(calls.length).toBe(0);
+  });
+
+  it("real adapter parses a valid ReplyIntent label from the model response", async () => {
+    const { impl } = fakeAnthropic("positive");
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-ant-test" }, fetchImpl: impl }, log);
+    const res = await llm.classifyReply(ticket(false), { text: "circle back next week" });
+    expect(res?.intent).toBe("positive");
+    expect(res?.confidence).toBeGreaterThan(0);
+    expect(res?.confidence).toBeLessThanOrEqual(1);
+  });
+
+  it("real adapter returns null on a non-enum label (caller falls back to regex)", async () => {
+    const { impl } = fakeAnthropic("maybe");
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-ant-test" }, fetchImpl: impl }, log);
+    expect(await llm.classifyReply(ticket(false), { text: "hmm" })).toBeNull();
+  });
+
+  it("real adapter returns null on an HTTP error", async () => {
+    const { impl } = fakeAnthropic("positive", 500);
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-ant-test" }, fetchImpl: impl }, log);
+    expect(await llm.classifyReply(ticket(false), { text: "hmm" })).toBeNull();
+  });
+
+  it("real adapter returns null when the model is itself unsure (answers 'unknown')", async () => {
+    const { impl } = fakeAnthropic("unknown");
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-ant-test" }, fetchImpl: impl }, log);
+    expect(await llm.classifyReply(ticket(false), { text: "hmm" })).toBeNull();
+  });
+
+  it("real adapter tolerates a trailing period on the label", async () => {
+    const { impl } = fakeAnthropic("negative.");
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-ant-test" }, fetchImpl: impl }, log);
+    expect((await llm.classifyReply(ticket(false), { text: "no thanks, we built our own" }))?.intent).toBe("negative");
+  });
+});

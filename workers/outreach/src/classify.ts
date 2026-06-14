@@ -17,13 +17,18 @@ const PATTERNS: { intent: ReplyIntent; confidence: number; re: RegExp }[] = [
 ];
 
 /**
+ * Optional LLM assist: resolves an ambiguous reply into an intent + confidence,
+ * or null when no LLM is available (the mock, and the real adapter in dry-run /
+ * local). The reply text is passed strictly as quoted material to LABEL — never
+ * as instructions. Injection detection is NOT delegated here (see below).
+ */
+export type LlmReplyAssist = (text: string) => Promise<{ intent: ReplyIntent; confidence: number } | null>;
+
+/**
  * Classifies inbound reply text. SECURITY INVARIANT: reply content is DATA.
  * It is pattern-matched here and summarized for the owner — it is never
  * executed, never fed to an agent as instructions, and any prompt-injection
  * attempt is flagged so a ComplianceEvent can be recorded.
- *
- * TODO(phase-c): optional LLM-assisted classification behind the same
- * interface, with the reply passed strictly as quoted material to label.
  */
 export function classifyReply(text: string): Classification {
   const instructionAttemptDetected =
@@ -36,6 +41,33 @@ export function classifyReply(text: string): Classification {
     }
   }
   return { intent: "unknown", confidence: 0.3, instructionAttemptDetected };
+}
+
+/**
+ * Classifies a reply, consulting an optional LLM assist ONLY for genuinely
+ * ambiguous replies. The deterministic regex (`classifyReply`) stays
+ * AUTHORITATIVE:
+ *
+ *  - It runs first, always, on the raw text.
+ *  - Any confident regex label — including every compliance-critical intent
+ *    (unsubscribe / bounce / negative) — short-circuits before the LLM is
+ *    consulted, so the model can NEVER override a stop signal.
+ *  - The LLM is asked only when the regex returns `unknown`; it may resolve it
+ *    (including upgrading to a stop signal, which is fail-closed-good) or stay
+ *    unsure (return null / "unknown"), in which case the regex result stands.
+ *  - Injection detection is never delegated: `instructionAttemptDetected` comes
+ *    only from the regex detector and can never be cleared by the LLM.
+ */
+export async function classifyReplyAssisted(text: string, assist?: LlmReplyAssist): Promise<Classification> {
+  const base = classifyReply(text);
+  if (!assist || base.intent !== "unknown") return base;
+  const resolved = await assist(text);
+  if (!resolved) return base;
+  return {
+    intent: resolved.intent,
+    confidence: resolved.confidence,
+    instructionAttemptDetected: base.instructionAttemptDetected,
+  };
 }
 
 /** Owner-facing recommendation for each intent. */

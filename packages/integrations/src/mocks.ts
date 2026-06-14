@@ -229,6 +229,11 @@ export function createMockLlm(log: Logger): LlmAdapter {
       // No real LLM: signal "use your deterministic template" by returning null.
       return null;
     },
+    async classifyReply(ticket) {
+      requireTicket(ticket, "llm.classifyReply");
+      // No real LLM: signal "keep your deterministic regex result" via null.
+      return null;
+    },
   };
 }
 

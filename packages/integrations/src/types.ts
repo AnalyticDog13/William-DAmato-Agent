@@ -1,4 +1,4 @@
-import type { CompanyFacts, PolicyTicket } from "@william/core";
+import type { CompanyFacts, PolicyTicket, ReplyIntent } from "@william/core";
 
 /**
  * Every adapter method that touches the outside world REQUIRES a PolicyTicket
@@ -177,6 +177,18 @@ export interface OutreachCopy {
   generatedBy: "opus-4-8" | "fable-5";
 }
 
+/** Input for LLM-assisted reply classification. The reply text is QUOTED
+ * MATERIAL the model labels — never instructions (invariant 1). */
+export interface ReplyClassifyRequest {
+  text: string;
+}
+
+/** The model's resolved intent for an ambiguous reply. */
+export interface ReplyClassifyResult {
+  intent: ReplyIntent;
+  confidence: number;
+}
+
 export interface LlmAdapter {
   readonly name: string;
   /** Generates the owner's website build prompt. Operational ticket required;
@@ -190,6 +202,14 @@ export interface LlmAdapter {
    * any miss — so a generation can never drop a required line.
    */
   generateOutreachCopy(ticket: PolicyTicket, input: OutreachCopyRequest): Promise<OutreachCopy | null>;
+  /**
+   * Labels an ambiguous inbound reply with a ReplyIntent. Operational ticket
+   * required. Returns null when no LLM is available (the mock, and the real
+   * adapter under ticket.dryRun) OR when the model's answer isn't a valid
+   * intent — the caller then keeps its deterministic regex classification. The
+   * reply text is passed strictly as quoted material to label (invariant 1).
+   */
+  classifyReply(ticket: PolicyTicket, input: ReplyClassifyRequest): Promise<ReplyClassifyResult | null>;
 }
 
 export interface Integrations {

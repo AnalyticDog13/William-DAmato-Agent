@@ -469,6 +469,65 @@ describe("business-head brief generation (WILLIAM_BUILDS_WEBSITES=false, the def
     expect(note).toBeDefined();
     expect(ctx.store.queue.list({ status: "dead" })).toHaveLength(0);
   });
+
+  // Phrasing that matches none of the regex patterns → regex classifies "unknown".
+  const AMBIGUOUS_REPLY = "Hey, appreciate you reaching out — let me chew on it and get back to you.";
+
+  it("LLM assist upgrades an otherwise-unknown reply to positive → opportunity + brief", async () => {
+    ingestLead(ctx, lead("Maybe Barbers"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+    // Inject an LLM that resolves the ambiguous reply (the mock returns null).
+    ctx.integrations.llm.classifyReply = async () => ({ intent: "positive", confidence: 0.71 });
+    ctx.store.queue.enqueue({
+      type: "reply.process",
+      payload: { leadId: l.id, text: AMBIGUOUS_REPLY, provider: "instantly" },
+      traceId: newTraceId(),
+      leadId: l.id,
+    });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.opportunities.count()).toBe(1);
+    const reply = ctx.store.replyEvents.list({ leadId: l.id })[0]!;
+    expect(reply.intent).toBe("positive");
+    expect(reply.intentConfidence).toBe(0.71);
+    expect(ctx.store.websiteBriefs.list({ leadId: l.id })[0]?.status).toBe("ready");
+  });
+
+  it("without the LLM, the same ambiguous reply stays unknown — no opportunity, no brief", async () => {
+    ingestLead(ctx, lead("Unsure Barbers"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+    // No override: the mock classifyReply returns null → regex result stands.
+    ctx.store.queue.enqueue({
+      type: "reply.process",
+      payload: { leadId: l.id, text: AMBIGUOUS_REPLY, provider: "instantly" },
+      traceId: newTraceId(),
+      leadId: l.id,
+    });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.replyEvents.list({ leadId: l.id })[0]?.intent).toBe("unknown");
+    expect(ctx.store.opportunities.count()).toBe(0);
+    expect(ctx.store.websiteBriefs.count()).toBe(0);
+    expect(ctx.store.leads.get(l.id)?.status).toBe("replied");
+  });
+
+  it("the LLM can never override a regex stop signal (unsubscribe stays absolute)", async () => {
+    ingestLead(ctx, lead("Optout Barbers"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+    // A hostile/buggy LLM tries to flip an unsubscribe into a positive — must be ignored.
+    ctx.integrations.llm.classifyReply = async () => ({ intent: "positive", confidence: 0.99 });
+    ctx.store.queue.enqueue({
+      type: "reply.process",
+      payload: { leadId: l.id, text: "Please unsubscribe me from this list.", provider: "instantly" },
+      traceId: newTraceId(),
+      leadId: l.id,
+    });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.replyEvents.list({ leadId: l.id })[0]?.intent).toBe("unsubscribe");
+    expect(ctx.store.leads.get(l.id)?.status).toBe("do_not_contact");
+    expect(ctx.store.opportunities.count()).toBe(0);
+  });
 });
 
 describe("Opus-generated outreach copy (with the required lines guaranteed)", () => {

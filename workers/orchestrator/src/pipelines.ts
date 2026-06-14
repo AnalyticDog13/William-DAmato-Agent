@@ -27,7 +27,7 @@ import {
   MAX_TOUCHES,
   NO_RESPONSE_CLOSE_DAYS,
   OPT_OUT_LINE,
-  classifyReply,
+  classifyReplyAssisted,
   createDeliveryDraft,
   createFirstTouchDraft,
   createFollowUpDraft,
@@ -613,7 +613,15 @@ const handleReply: JobHandler = async (ctx, job) => {
   const lead = getLead(ctx, job);
   const text = String(job.payload.text ?? "");
   const provider = (job.payload.provider as "instantly" | "gmail" | "manual") ?? "manual";
-  const classification = classifyReply(text);
+  // The deterministic regex is authoritative; the LLM is consulted ONLY for
+  // genuinely ambiguous ("unknown") replies and can never override a stop signal
+  // (classifyReplyAssisted short-circuits on any confident regex label). The
+  // reply text enters the prompt strictly as quoted data to label (invariant 1);
+  // the ticket below is only minted when the assist actually runs.
+  const classification = await classifyReplyAssisted(text, async (replyText) => {
+    const ticket = operationalTicket(ctx, "llm.classifyReply", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId);
+    return ctx.integrations.llm.classifyReply(ticket, { text: replyText });
+  });
 
   if (classification.instructionAttemptDetected) {
     ctx.store.writeCompliance(
