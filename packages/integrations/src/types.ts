@@ -1,4 +1,4 @@
-import type { PolicyTicket } from "@william/core";
+import type { CompanyFacts, PolicyTicket } from "@william/core";
 
 /**
  * Every adapter method that touches the outside world REQUIRES a PolicyTicket
@@ -122,6 +122,76 @@ export interface HiggsfieldAdapter {
   ): Promise<ExecutionResult>;
 }
 
+/** Audit-derived hints the brief.generate job passes so the mock scrape (and a
+ * dry-run real scrape) can synthesize real-looking facts with zero network. */
+export interface CompanyScrapeHints {
+  companyName?: string;
+  niche?: string;
+  services?: string[];
+  contactEmails?: string[];
+  phones?: string[];
+  socialLinks?: Record<string, string>;
+  about?: string;
+}
+
+export interface FirecrawlAdapter {
+  readonly name: string;
+  /** Read-only scrape of the lead's current site → CompanyFacts. Operational
+   * (audited, ungated) ticket required; simulates from hints on ticket.dryRun. */
+  scrapeCompany(ticket: PolicyTicket, url: string, hints?: CompanyScrapeHints): Promise<CompanyFacts>;
+}
+
+/** Input for build-prompt generation. All free text here is QUOTED MATERIAL the
+ * model transforms — never instructions (invariant 1). */
+export interface BuildPromptRequest {
+  companyName: string;
+  niche: string;
+  websiteUrl: string | null;
+  weaknesses: string[];
+  companyFacts: CompanyFacts;
+}
+
+export interface BuildPromptResult {
+  buildPrompt: string;
+  recommendedStack: { libs: string[]; plugins: string[] };
+  generatedBy: "mock" | "opus-4-8" | "fable-5";
+}
+
+/** Input for Opus-personalized outreach copy. Audit findings are QUOTED MATERIAL
+ * the model references truthfully — never instructions (invariant 1). */
+export interface OutreachCopyRequest {
+  kind: "first_touch" | "follow_up";
+  variant: string;
+  companyName: string;
+  niche: string;
+  firstName: string | null;
+  websiteUrl: string | null;
+  hasWebsite: boolean;
+  auditFindings: string[];
+  sequence?: number;
+}
+
+export interface OutreachCopy {
+  subject: string;
+  body: string;
+  generatedBy: "opus-4-8" | "fable-5";
+}
+
+export interface LlmAdapter {
+  readonly name: string;
+  /** Generates the owner's website build prompt. Operational ticket required;
+   * the real adapter simulates (template output) on ticket.dryRun (no network). */
+  generateBuildPrompt(ticket: PolicyTicket, input: BuildPromptRequest): Promise<BuildPromptResult>;
+  /**
+   * Opus-personalized outreach copy. Returns null when no LLM copy is available
+   * (the mock, and the real adapter under ticket.dryRun) so the caller keeps its
+   * deterministic template. The caller still enforces the opt-out line, the
+   * Cornell + mockup claims (validateDraft), and falls back to the template on
+   * any miss — so a generation can never drop a required line.
+   */
+  generateOutreachCopy(ticket: PolicyTicket, input: OutreachCopyRequest): Promise<OutreachCopy | null>;
+}
+
 export interface Integrations {
   email: EmailAdapter;
   instantly: InstantlyAdapter;
@@ -133,4 +203,6 @@ export interface Integrations {
   calendar: CalendarAdapter;
   transcripts: TranscriptIngestionAdapter;
   higgsfield: HiggsfieldAdapter;
+  firecrawl: FirecrawlAdapter;
+  llm: LlmAdapter;
 }

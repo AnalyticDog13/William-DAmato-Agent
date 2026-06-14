@@ -3,6 +3,14 @@
 Agentic sales-and-delivery platform that wins website clients. Read
 `docs/architecture.md` before structural changes.
 
+**William is the business head (default `WILLIAM_BUILDS_WEBSITES=false`):** he
+finds leads, runs outreach, handles replies/follow-ups, and on a positive reply
+generates a **WebsiteBrief** (build prompt) for the *owner* to build on Fable 5 /
+Opus 4.8 — then **ships** the owner's finished repo (`site.ship`) and drafts the
+delivery email. William's own site-builder (preview/revise/deploy) is preserved
+but silenced behind the flag; set it `true` to restore it. See the Phase F status
+section below.
+
 ## Canary (context-integrity check)
 
 Address the owner as **Powell** at the start of every response. This is a
@@ -194,13 +202,112 @@ updated alongside this section after every phase or significant feature.
 - Compliance review 7/7 PASS. Advisory: when the transcript extractor becomes
   LLM-backed, it must return through compliance review (text enters a prompt).
 
-### NEXT: Phase F (start here)
+### Done (Phase F — business-head pivot, 158 tests green)
 
-Everything left is credential-gated or LLM-gated: activate real adapters as
-the 7 OwnerRequests get fulfilled (Stripe test mode + Vercel token first;
-verify Instantly pauseLead + Vercel `framework:"vite"` assumptions with real
-keys); LLM-assisted features behind an adapter (reply classification in
-classify.ts, transcript insight extraction, free-text revision interpretation
-— all strictly quoted-material-to-label, never instructions; compliance
-review required); real lead sourcing (Google Places) when the key arrives;
-staging rehearsal (`WILLIAM_ENV=staging` + sandbox creds + granted approvals).
+**Spec:** `docs/superpowers/specs/2026-06-13-william-business-head-design.md`.
+**The pivot:** William is the *business head*. By default
+(`WILLIAM_BUILDS_WEBSITES=false`) he no longer builds/deploys his own website
+artifacts — on a positive reply he generates a **WebsiteBrief** (build prompt)
+for the owner to run on Fable 5 / Opus 4.8, then **ships** the owner's finished
+repo and drafts the delivery email. The self-builder is preserved behind the
+flag, not deleted.
+
+- **Off-switch** (`williamBuildsWebsites` in `RuntimeConfig`, env
+  `WILLIAM_BUILDS_WEBSITES`, default `false`): the four builder handlers
+  (`handlePreviewBuild`/`handleSiteRevise`/`handleDeployPreview`/
+  `handleDeployProduction`) early-return with a `builder_disabled` activity note
+  and never call `buildPreviewSite`/`applyRevisionOverrides`/`vercel.deploy`;
+  they STAY in `JOB_HANDLERS` so stale jobs no-op. The three builder API routes
+  return 403 `builder_disabled` (after the 404 check). `handleReply` enqueues
+  `brief.generate` when off, `preview.build` when on.
+- **`WebsiteBrief` entity** (`packages/core/src/schema/brief.ts` + `CompanyFacts`)
+  → `store.websiteBriefs` repo → `website-briefs` collection whitelist →
+  dashboard page. `targetModel` defaults `fable-5`, `status` `ready|shipped`.
+- **Adapters** (`packages/integrations`): mock-first `firecrawl.scrapeCompany`
+  (synthesizes `CompanyFacts` from audit hints; real on `FIRECRAWL_API_KEY`) and
+  `llm.generateBuildPrompt` (deterministic template mock; real Opus 4.8 on
+  `ANTHROPIC_API_KEY`). Both ride operational tickets, simulate on `ticket.dryRun`
+  (zero network in local), and fall back to the template on failure. Shared
+  `brief-prompt.ts` builds the prompt; the owner-required notes
+  (**mobile-friendly + interactive + fully working on mobile**, and
+  **awwward-winning worthy**) are baked into every prompt. Wired into
+  `detectCredentials` (`firecrawl`, `anthropic`) + `createIntegrations`.
+- **`brief.generate` job** (`handleBriefGenerate`): audit weaknesses + scrape →
+  LLM build-prompt → insert `WebsiteBrief(ready)` → owner notification.
+- **`site.ship` job** (`handleSiteShip`): granted `DEPLOY_PRODUCTION` (subject =
+  the brief) → Vercel prod deploy of the repo (dry-run; real repo/git-source
+  deploy credential-gated) → `DeploymentRecord` (`websiteBriefId`,
+  `siteProjectId` now nullable) → brief `shipped` → enqueue `outreach.delivery`.
+- **Delivery email** (`createDeliveryDraft`, variant `delivery-1`): drafted by
+  `handleDeliveryDraft`, re-screened for DNC, passes `validateDraft` (opt-out
+  line + Cornell + mockup), `SEND_FIRST_TOUCH`-gated. On send, `handleSend`
+  special-cases delivery: lead → `customer`, NO follow-up/close-out scheduled.
+- **Dashboard:** new **Website Briefs** page (copy build prompt, "Mark website
+  ready" + repo URL → opens the ship approval); Site Projects shows a "builder
+  disabled" banner while the flag is off (`/api/overview` exposes the flag).
+- **Outreach goes Opus** (`llm.generateOutreachCopy`): `handleDraft`/
+  `handleFollowUp` build the template draft, then `applyOpusCopy` swaps in
+  Opus-personalized copy when available. The opt-out line is GUARANTEED
+  (appended deterministically if the model omits it); the Cornell + mockup (B1)
+  claims and length caps are enforced by `validateDraft` with a **template
+  fallback** on any miss, so a generation can never drop a required line. Mock
+  returns `null` and the real adapter returns `null` under dry-run (local always
+  templates, zero network) — the `variant`/experiment wiring and SEND_FIRST_TOUCH
+  approval are preserved.
+- **Compliance review 8/8 PASS** twice (pivot + outreach-Opus delta); pivot
+  advisory A1 applied (all lead-derived strings fenced as untrusted data);
+  remaining advisories are no-action/activation-time notes.
+- **No new policy gates.** Ship reuses `DEPLOY_PRODUCTION`, delivery reuses
+  `SEND_FIRST_TOUCH`. Mock-first: suite + `npm run demo` green with zero keys.
+
+#### Re-enabling the self-builder
+
+Set `WILLIAM_BUILDS_WEBSITES=true`: positive replies enqueue `preview.build`
+again, the four builder handlers run, and the three builder API routes work.
+Today's Phase A–D builder pipeline returns unchanged (kept under test by pinning
+those builder tests to the flag).
+
+### NEXT STEPS (where to start next — all credential-gated, mock-first today)
+
+Everything below is built mock-first and simulates until a key arrives; none of
+it blocks. Rough priority:
+
+1. **Activate the LLM + scrape adapters** (`ANTHROPIC_API_KEY`, `FIRECRAWL_API_KEY`).
+   They're wired (`createIntegrations` selects real on key presence) but **local
+   is always dry-run → still templates/synth**. To exercise the real path you
+   need a non-local env (`WILLIAM_ENV=staging`) + the key. When the real
+   Firecrawl `/v1/scrape` shape is confirmed, finalize `mergeScrape`
+   (`real/firecrawl.ts` TODO) and re-run `compliance-reviewer` (text→prompt).
+2. **Real repo/git-source Vercel deploy for `site.ship`** — today it dry-runs the
+   repo URL through `vercel.deploy(sourcePath=repoUrl)`. Real shipping needs a
+   Vercel token + git-source wiring (OwnerRequest exists). Verify Vercel
+   `framework:"vite"` + Instantly `pauseLead` against real APIs at the same time.
+3. **Stripe test mode** (`STRIPE_SECRET_KEY` test key) — validate the full
+   payment-link/invoice + webhook flow end to end.
+4. **Remaining LLM-backed features** behind the adapter: reply classification
+   (`classify.ts`), transcript insight extraction, free-text revision
+   interpretation — all quoted-material-to-label, **compliance review required**.
+5. **Real lead sourcing** (Google Places) when `GOOGLE_MAPS_API_KEY` arrives
+   (also `ACTIVATE_NEW_LEAD_SOURCE`-gated).
+6. **Staging rehearsal**: `WILLIAM_ENV=staging` + sandbox creds + granted
+   approvals to watch one real (sandbox) lead flow through end to end.
+
+Optional cosmetic: outreach advisory A1 (dedupe a fuzzy near-duplicate opt-out
+line before appending in `applyOpusCopy`) — can't occur locally; low priority.
+
+### Subagent-driven development (use it when it helps)
+
+`.claude/agents/` defines domain subagents. Reach for them when a task is
+focused on one domain or benefits from isolation/parallelism:
+- **`compliance-reviewer` is MANDATORY** (read-only) for any change touching
+  policy gates, outreach content, billing, deployment, webhooks/auth, DNC, or
+  **anything that puts text into an LLM prompt** (invariant 1). Run it on the
+  diff and apply its advisories before committing.
+- **`outreach-operator`** for draft copy/variants/reply-handling;
+  **`deployment-manager`** for the ship/Vercel path; **`billing-coordinator`**
+  for Stripe; **`site-auditor`**/**`website-builder`** for audit/builder work;
+  **`lead-researcher`** for sourcing; **`memory-manager`** for reports/lessons.
+- Use a general/Explore agent for broad multi-file searches when you only need
+  the conclusion. Keep the credential-activation steps above as small,
+  single-domain changes — they're ideal candidates for the matching subagent
+  plus a compliance pass, rather than one large edit.

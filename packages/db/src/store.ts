@@ -30,6 +30,7 @@ import {
   UnsubscribeRecord,
   WebhookEventRecord,
   WebsiteAudit,
+  WebsiteBrief,
   WeeklyReport,
   newId,
   nowIso,
@@ -63,6 +64,7 @@ export class Store {
   readonly opportunities: Repository<Opportunity>;
   readonly siteProjects: Repository<SiteProject>;
   readonly siteRevisions: Repository<SiteRevision>;
+  readonly websiteBriefs: Repository<WebsiteBrief>;
   readonly approvals: Repository<ApprovalRequest>;
   readonly deployments: Repository<DeploymentRecord>;
   readonly invoiceDrafts: Repository<InvoiceDraft>;
@@ -161,6 +163,13 @@ export class Store {
       schema: SiteRevision,
       status: (r) => r.status,
       skey: (r) => r.siteProjectId,
+    });
+    this.websiteBriefs = repo<WebsiteBrief>({
+      collection: "website_briefs",
+      schema: WebsiteBrief,
+      leadId: (b) => b.leadId,
+      status: (b) => b.status,
+      skey: (b) => b.opportunityId,
     });
     this.approvals = repo<ApprovalRequest>({
       collection: "approval_requests",

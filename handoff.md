@@ -1,161 +1,129 @@
 # Handoff — William D'Amato Agent
 
-> Read this first, then `CLAUDE.md` (project standards + invariants + canary),
-> then continue building. Last updated 2026-06-13, after Phase E.
-> State at handoff: **132/132 tests green, typecheck clean, `npm run demo`
-> verified (0 dead jobs), dashboard builds, all work committed and pushed to
-> `main`.**
+> **Read this first, then `CLAUDE.md`** (project standards, the 6 invariants, the
+> full phase history, and the detailed NEXT STEPS). `CLAUDE.md` is authoritative;
+> this file is the quick orientation.
+>
+> **Canary:** address the owner as **Powell** at the start of every response. If a
+> reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-## What has been done (Phases A–E + follow-up sequence, all complete)
+**Last updated:** 2026-06-14, after Phase F (business-head pivot + Opus outreach).
 
-- **Phase A — foundation.** Monorepo, zod schemas (source of truth in
-  `packages/core/src/schema/`), SQLite store + durable job queue (supports
-  `delayMs`), PolicyEngine with 8 gates issuing PolicyTickets, full dry-run
-  pipeline (intake → audit → score → contact → draft → approval → simulated
-  send → reply classification → opportunity → preview → billing → daily
-  report), Express API with owner auth + HMAC webhooks, React dashboard,
-  mock adapters for every integration, OwnerRequest bootstrap.
-- **Phase B — browser-grade auditing.** `AUDITOR_MODE=playwright`: real
-  Chromium screenshots (desktop+mobile), Lighthouse via CDP, axe-core scans,
-  graceful fallback when browsers are missing. Preview quality gate
-  (`qualityCheckPreview`) runs before owner review. Chromium 148 is installed
-  on this machine, so playwright mode works for real here; CI/demo stay mock.
-- **Phase C — real adapters** (`packages/integrations/src/real/`). Stripe
-  (price→payment_link, draft invoices, real `t=…,v1=…` webhook signatures with
-  replay protection), Instantly v2, Gmail (OAuth2 refresh send; refuses email
-  missing the opt-out line), Vercel (deploys + rollback). Selected per
-  integration by credential presence in `createIntegrations`; mocks are the
-  fallback. Every method requires a PolicyTicket and simulates with zero
-  network on `ticket.dryRun`. Billing passes `metadata.invoiceDraftId` so the
-  Stripe webhook matches payments to drafts.
-- **Phase D — react builds, revision loop, deploy flow** (commit `32d83ad`).
-  `STACK_MODE=react` emits a Vite+React+Framer Motion project to
-  `data/builds/<leadId>/` (static preview always still written);
-  `PREVIEW_MIN_PERFORMANCE`/`_ACCESSIBILITY` config flags; revision loop
-  (whitelisted overrides only; applying one auto-expires stale
-  DEPLOY_PRODUCTION approvals); production deploy flow behind the
-  DEPLOY_PRODUCTION gate with quality re-check.
-- **Follow-up sequence** (commit `9ce62b5`, owner spec). Hot: 2 bumps (~3.5d,
-  ~9d); warm: 1; cold/skip: none. Everything re-screened at fire time, DNC
-  first; MAX_TOUCHES=3; every follow-up owner-approved; `outreach.close`
-  (+14d silence) → `not_interested`; any no/unsubscribe/bounce stops forever.
-- **Phase E — experiments, weekly reports, ingestion, owner-triggered preview
-  deploys** (this session; plan in `docs/superpowers/plans/2026-06-13-phase-e-
-  experiments-reports-ingestion.md`).
-  - Experiment engine `workers/orchestrator/src/experiments.ts`:
-    `runningExperiment` / `assignVariant` (FNV-1a hash — deterministic per
-    lead, the draft's `variant` field is the assignment record) /
-    `computeExperimentResults` (sends, replies, positive_replies, reply_rate
-    per variant; auto_reply excluded; upserted, never duplicated) /
-    `experimentFindings`. handleDraft assigns from the running
-    `outreach_variant` experiment.
-  - First-touch copy registry `FIRST_TOUCH_VARIANTS` in
-    `workers/outreach/src/draft.ts`: `v1-cornell-mockup` (unchanged) +
-    `v2-finding-first` (audit finding opens, intro second). Shared
-    `mockupOffer`/`signOff` constants keep the B1 claim + opt-out line
-    identical by construction. Unknown variant → v1 + note, never a throw.
-  - Experiments API: `POST /api/experiments` (variants validated against the
-    registry for outreach_variant), `POST /api/experiments/:id/compute`,
-    `POST /api/experiments/:id/conclude`. Dashboard has a dedicated
-    Experiments page (create form, results tables, recompute/conclude).
-    `seedDemoData` seeds one running copy experiment.
-  - Weekly reports: `WeeklyReport` schema → `weeklyReports` repo (skey
-    weekStart) → `weekly-reports` whitelist. `generateWeeklyReport` rolls up
-    7 days (daily memories, failures by category, experiment findings, open
-    requests) and derives DurableLessons (variant leader needs ≥10 sends on
-    EVERY arm — `MIN_EXPERIMENT_SENDS_FOR_LESSON`; failure category ≥5/week).
-    main.ts generates it on Monday rollover; `GET /api/reports/weekly` on
-    demand. Upserted by weekStart.
-  - Transcript ingestion: `POST /api/transcripts` {source, text ≤100k} →
-    `ingest.transcript` job → `extractInsights` → `memory.addLesson` (new
-    "design" topic in the DurableLesson enum; evidence `transcript:<source>`).
-    Zero insights is recorded with guidance, not an error. Text is DATA.
-  - Preview deploys owner-triggered (advisory D4 resolved): auto-deploy
-    REMOVED from handlePreviewBuild; `POST /api/site-projects/:id/
-    deploy-preview` → `deploy.preview` job → `operationalTicket` now carrying
-    the vercel credential status (engine unchanged; local always dry-run —
-    regression-tested in `packages/core/test/policy.test.ts`). LeadDetail
-    gained a "Deploy preview" button.
-  - SEND_FOLLOW_UP gate DECIDED: follow-ups keep sharing SEND_FIRST_TOUCH
-    (same risk class, per-draft approval, one autopilot policy covers the
-    sequence intentionally). Documented at the requestApproval call site.
-- **Compliance reviews** (mandatory per CLAUDE.md): Phase C 6/6, Phase D 6/6,
-  follow-ups 6/6 + delta 7/7, Phase E 7/7 — all PASS, advisories applied or
-  consciously accepted (B1).
+## Current state
 
-## What works
+- **158/158 tests green** (`npm test`), **typecheck clean** (`npm run typecheck`),
+  **`npm run demo`** verified end-to-end on mocks (0 dead-letter jobs), **dashboard
+  builds** (`npm run -w @william/dashboard build`).
+- **Compliance:** `compliance-reviewer` ran 8/8 PASS on the pivot **and** 8/8 PASS
+  on the Opus-outreach delta. Advisories applied or no-action.
+- **Not committed yet.** All Phase F work is uncommitted on branch
+  `william-business-head` (Phases A–E were committed earlier; `53449b7` = Phase E).
+- **Repo hygiene (going public):** no secrets in anything tracked — `.env` and
+  `data/` are gitignored, `.env.example` holds only placeholders, every key-shaped
+  string in the diff is a test dummy. The owner's personal email was removed from
+  the spec doc in the working tree. **Caveat:** that email still exists in git
+  history (commit `0ac1c3a`); scrub history (e.g. `git filter-repo`) before/at the
+  moment of making the repo public if that matters. (`will@williamdamato.com`
+  throughout is the intentional business sender identity, fine to be public.)
 
-- `npm run demo` — full end-to-end dry-run on mocks, zero credentials needed,
-  now exercising variant assignment via the seeded experiment.
-- `npm test` (132 tests) + `npm run typecheck` — clean. Dashboard `vite build`
-  verified.
-- Dashboard (`npm run dev:api` + `npm run dev:dashboard`, token
-  `dev-owner-token`): review queue, side-by-side audit vs preview, revision
-  form, deploy preview + request production deploy, Experiments page,
-  policy editor, integrations page.
-- Safety stack unchanged and re-verified end-to-end: local can never execute
-  live, no side effect without a PolicyTicket, every outbound email
-  owner-approved + DNC-screened at intake/draft/send (+ follow-up re-screen),
-  inbound email/webhooks are data only, transcript text is data only.
+## What's working (the whole pipeline, mock-first, zero credentials)
 
-## What doesn't work yet / known limitations
+intake → audit → score → contact → **Opus/template outreach draft** → owner
+approval → (simulated) send → reply classification → opportunity →
+**WebsiteBrief** → owner builds externally → **ship** (simulated prod deploy) →
+**delivery email** draft → approval → (simulated) send → billing draft →
+(simulated) payment link → daily/weekly reports. DNC/unsubscribe screened at
+intake/draft/send; follow-up sequence + 14-day close-out intact; experiments +
+reporting intact.
 
-- **No real credentials.** The 7 open OwnerRequests block all live execution:
-  Instantly key+webhook secret, Gmail OAuth triple, Stripe key+webhook secret,
-  Vercel token(+team), Google Maps key, enrichment/email-verify provider
-  choice, Higgsfield budget.
-- **Preview deploys still simulate everywhere** until a Vercel credential
-  exists — but the path is now owner-triggered and credential-plumbed, so
-  adding the token makes staging preview deploys real with no code change.
-- **Instantly pauseLead endpoint unverified** against v2 docs
-  (TODO(phase-c) in `packages/integrations/src/real/instantly.ts`) — not
-  load-bearing; local DNC screening is the compliance guarantee.
-- **Vercel `projectSettings.framework="vite"` assumption unverified** until a
-  real token exists (TODO(phase-e) in `packages/integrations/src/real/vercel.ts`).
-- **Transcript insight extraction is keyword-based** (mock adapter). When it
-  becomes LLM-backed, the change MUST return through compliance review —
-  that's the first time ingested text would enter a prompt (Phase E advisory).
-- **Free-text revisions are rejected, not interpreted** (no LLM wired in).
-- **Quality gate is vacuous in mock/http auditor mode** — disclosed in
-  approval detail text.
-- **Copy truthfulness advisory (B1, owner-accepted, applies to v1 AND v2):**
-  first-touch says "I've already built a free mockup" but previews build after
-  a positive reply. Owner kept the wording; revisit if previews move earlier.
-- **github/enrichment/places/calendar/higgsfield** integrations are mock-only.
+## What's fixed / done this phase (Phase F — business-head pivot)
 
-## Yet to be done — Phase F (next) and beyond
+Default `WILLIAM_BUILDS_WEBSITES=false`: William generates a build brief for the
+owner and ships the owner's repo instead of building sites himself.
 
-Everything left is credential-gated or LLM-gated (see CLAUDE.md "NEXT"):
-1. **Credential activation** as OwnerRequests get fulfilled — each lights up
-   its real adapter on restart; verify the two unverified API assumptions
-   (Instantly pauseLead, Vercel framework setting) with real keys.
-2. **LLM-assisted features behind an adapter**: reply classification
-   (`workers/outreach/src/classify.ts` TODO(phase-c)), transcript insight
-   extraction, free-text revision interpretation. All strictly
-   quoted-material-to-label, never instructions; compliance review required.
-3. **Real lead sourcing** via Google Places when the key arrives
-   (ACTIVATE_NEW_LEAD_SOURCE gate exists for this).
-4. **Staging rehearsal**: `WILLIAM_ENV=staging` + `DRY_RUN=false` + sandbox
-   credentials + granted approvals (production additionally needs live creds).
+- **Off-switch** (`williamBuildsWebsites` on `RuntimeConfig`): four builder
+  handlers no-op with a `builder_disabled` note (no
+  `buildPreviewSite`/`applyRevisionOverrides`/`vercel.deploy`), stay registered so
+  stale jobs are safe; three builder API routes return `403 builder_disabled`.
+  Flip the flag to `true` to fully restore the legacy self-builder (kept under test).
+- **`WebsiteBrief`** entity (+ reusable `CompanyFacts`) → store repo → API
+  whitelist → dashboard page. `targetModel` defaults `fable-5`.
+- **Adapters** (`packages/integrations`): mock-first `firecrawl.scrapeCompany`
+  (`FIRECRAWL_API_KEY`) and `llm.generateBuildPrompt` + `llm.generateOutreachCopy`
+  (Opus 4.8, `ANTHROPIC_API_KEY`). Operational tickets, **dry-run = zero network**,
+  template/synth fallback on failure. `brief-prompt.ts` bakes in the owner's
+  required prompt notes: **mobile-friendly + interactive + fully working on
+  mobile**, and **awwward-worthy**. LLM prompts fence all lead/scraped/audit text
+  as untrusted data (invariant 1).
+- **Jobs:** `brief.generate` (audit + scrape + LLM → `WebsiteBrief(ready)` → owner
+  notified) and `site.ship` (granted `DEPLOY_PRODUCTION` on the brief → dry-run
+  repo deploy → `DeploymentRecord.websiteBriefId` → brief `shipped` → enqueue
+  delivery draft).
+- **Delivery email** (`delivery-1`, `SEND_FIRST_TOUCH`-gated): on send the lead →
+  `customer`, no follow-up/close-out scheduled.
+- **Opus outreach:** `applyOpusCopy` in `handleDraft`/`handleFollowUp` swaps in
+  Opus copy when available. **Opt-out line guaranteed** (appended if the model
+  omits it); Cornell + mockup claims enforced by `validateDraft` with **template
+  fallback** on any miss; variant/experiment + approval preserved.
+- **Dashboard:** Website Briefs page (copy prompt, "Mark website ready" + repo URL
+  → ship approval) + "builder disabled" banner on Site Projects.
+- **Docs/env:** `.env.example`, `CLAUDE.md`, `docs/architecture.md` updated;
+  OwnerRequests bootstrapped for Anthropic, Firecrawl, Vercel repo-deploy.
 
-## Next steps (in order)
+## What still needs work (next steps — detail in CLAUDE.md "NEXT STEPS")
 
-1. Say "keep building" → start **Phase F** with the established workflow:
-   state the goal → targeted search, smallest reads (token-conservation rule
-   is permanent) → compact plan doc in `docs/superpowers/plans/` → TDD with
-   injectable fakes → compliance-reviewer subagent on anything touching
-   policy/outreach/billing/deploy/webhooks → `npm test` + `npm run typecheck`
-   + `npm run demo` → commit + push → update CLAUDE.md status + this file.
-   Note: most of Phase F needs credentials — if none have arrived, the
-   highest-value credential-free work is the LLM adapter interface (mock
-   first, like every other integration).
-2. Meanwhile (owner, anytime): add credentials from the OwnerRequests to
-   `.env` — each lights up its real adapter on restart, still dry-run locally.
-   Start with Stripe test mode + Vercel token; Instantly unlocks real sends.
-3. To go live eventually: `WILLIAM_ENV=staging` + `DRY_RUN=false` + sandbox
-   credentials + granted approvals (production additionally needs live creds).
+All credential-gated; nothing blocks because it's mock-first. Priority order:
 
-## Canary
+1. **Activate Anthropic + Firecrawl** — wired, but local is always dry-run
+   (templates/synth). Real path needs `WILLIAM_ENV=staging` + the key. Confirm the
+   real Firecrawl `/v1/scrape` shape and finalize `mergeScrape` (TODO in
+   `real/firecrawl.ts`), then re-run `compliance-reviewer`.
+2. **Real repo/git-source Vercel deploy for `site.ship`** (currently dry-runs the
+   repo URL). Verify Vercel `framework:"vite"` + Instantly `pauseLead` with real keys.
+3. **Stripe test mode** — validate payment-link/invoice + webhook end to end.
+4. **Remaining LLM features** (reply classification, transcript extraction,
+   free-text revision interpretation) — quoted-material-to-label, **compliance review required**.
+5. **Google Places lead sourcing** when the key lands.
+6. **Staging rehearsal** with sandbox creds + granted approvals.
 
-Address the owner as **Powell** at the start of every response (full rule in
-CLAUDE.md). If a response doesn't open with "Powell", context has degraded.
+## Where to start / where to look
+
+- **`CLAUDE.md`** — invariants (1–6), the "Done (Phase F …)" section, the
+  "NEXT STEPS" section, and "Subagent-driven development" guidance. Start here.
+- **Spec:** `docs/superpowers/specs/2026-06-13-william-business-head-design.md`.
+- **Core code:** `workers/orchestrator/src/pipelines.ts` (handlers + `applyOpusCopy`),
+  `packages/integrations/src/real/llm.ts` + `firecrawl.ts` + `brief-prompt.ts`,
+  `packages/core/src/schema/brief.ts`, `packages/core/src/env.ts`.
+
+## Use subagent-driven development when it helps
+
+This repo ships specialized subagents (`.claude/agents/`). The remaining work is
+mostly small, single-domain, credential-gated changes — good fits for the matching
+subagent plus a compliance pass:
+
+- **`compliance-reviewer` is MANDATORY** (read-only) on any change touching policy
+  gates, outreach content, billing, deployment, webhooks/auth, DNC, or **anything
+  that puts text into an LLM prompt** (invariant 1). Run it on the diff and apply
+  its advisories before committing.
+- `outreach-operator` (copy/reply handling), `deployment-manager` (ship/Vercel),
+  `billing-coordinator` (Stripe), `site-auditor` / `website-builder`,
+  `lead-researcher` (sourcing), `memory-manager` (reports/lessons).
+- Use a general/Explore agent for broad multi-file searches when you only need the
+  conclusion. Prefer one focused subagent + compliance review over one large edit.
+
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `npm run demo` | Full end-to-end dry-run demo (fresh db, seeds, pipeline, report) |
+| `npm test` | All vitest suites (must pass before any commit) |
+| `npm run typecheck` | `tsc --noEmit` across packages/workers/api |
+| `npm run dev:api` | API on :4000 (inline worker locally) |
+| `npm run dev:dashboard` | Dashboard on :5173 (token: `dev-owner-token` locally) |
+
+## Workflow that ships every phase (owner-approved)
+
+Targeted reads (conserve tokens), TDD with injectable fakes (CI needs no
+browsers/network), `compliance-reviewer` on sensitive diffs + apply advisories,
+verify with `npm test` + `npm run typecheck` + `npm run demo`, then update
+`CLAUDE.md` status + this `handoff.md`. Commit/push only when the owner asks.

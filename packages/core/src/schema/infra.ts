@@ -43,6 +43,8 @@ export const IntegrationCredentialStatus = BaseEntity.extend({
     "email_verify",
     "calendar",
     "higgsfield",
+    "firecrawl",
+    "anthropic",
   ]),
   mode: z.enum(["missing", "sandbox", "live"]),
   healthy: z.boolean().nullable().default(null),

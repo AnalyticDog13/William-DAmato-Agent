@@ -120,6 +120,62 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
   };
 }
 
+/** The post-ship delivery email variant (shares the live link, offers a call). */
+export const DELIVERY_VARIANT = "delivery-1";
+
+export interface DeliveryDraftInput {
+  lead: Lead;
+  company: Company;
+  contact: Contact;
+  /** The live site URL (or a dry-run placeholder) to share. */
+  liveUrl: string | null;
+  traceId: string;
+}
+
+/**
+ * Delivery email sent after the owner ships the finished site. Still gated by
+ * SEND_FIRST_TOUCH (same outbound-email risk class) and owner-approved, so it
+ * must pass validateDraft: it references the earlier free mockup (now a real
+ * live site), keeps the Cornell intro, and carries the opt-out line.
+ */
+export function createDeliveryDraft(input: DeliveryDraftInput): OutreachDraft {
+  const { lead, company, contact, liveUrl } = input;
+  const firstName = contact.name?.split(/\s+/)[0];
+  const greeting = firstName ? `Hi ${firstName},` : `Hi there,`;
+  const link = liveUrl ?? "(link to follow)";
+  const now = nowIso();
+  const body = [
+    greeting,
+    "",
+    `Great news — the free mockup I shared for ${company.name} is now a real, live website: ${link}`,
+    "",
+    `I'm Will, the Cornell student who reached out. Take it for a spin on your phone and desktop — if you'd like any tweaks, or want to hop on a quick call to go over it, just reply and I'll sort it out.`,
+    "",
+    `Best,`,
+    `Will`,
+    `williamdamato.com`,
+    "",
+    OPT_OUT_LINE,
+  ].join("\n");
+
+  return {
+    id: newId("odft"),
+    createdAt: now,
+    updatedAt: now,
+    leadId: lead.id,
+    contactId: contact.id,
+    variant: DELIVERY_VARIANT,
+    subject: `${company.name}'s new website is live`.slice(0, 70),
+    body,
+    personalizationNotes: [`delivery email`, ...(firstName ? [`greeted by first name (${firstName})`] : [])],
+    auditFindingsUsed: [],
+    status: "draft",
+    approvalRequestId: null,
+    sentAt: null,
+    traceId: input.traceId,
+  };
+}
+
 function formatAngles(angles: string[]): string {
   if (angles.length === 1) return angles[0]!;
   return `${angles[0]} — and ${angles[1]}`;

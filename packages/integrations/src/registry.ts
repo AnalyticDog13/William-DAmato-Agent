@@ -3,16 +3,20 @@ import {
   createMockCalendar,
   createMockEmail,
   createMockEnrichment,
+  createMockFirecrawl,
   createMockGithub,
   createMockHiggsfield,
   createMockInstantly,
+  createMockLlm,
   createMockPlaces,
   createMockStripe,
   createMockTranscripts,
   createMockVercel,
 } from "./mocks";
+import { createFirecrawlAdapter } from "./real/firecrawl";
 import { createGmailAdapter } from "./real/gmail";
 import { createInstantlyAdapter } from "./real/instantly";
+import { createLlmAdapter } from "./real/llm";
 import type { RealDeps } from "./real/shared";
 import { createStripeAdapter } from "./real/stripe";
 import { createVercelAdapter } from "./real/vercel";
@@ -28,7 +32,9 @@ export type IntegrationName =
   | "enrichment"
   | "email_verify"
   | "calendar"
-  | "higgsfield";
+  | "higgsfield"
+  | "firecrawl"
+  | "anthropic";
 
 export interface CredentialReport {
   integration: IntegrationName;
@@ -51,6 +57,8 @@ export function detectCredentials(env: NodeJS.ProcessEnv, williamEnv: RuntimeCon
     { integration: "email_verify", mode: mode(!!env.EMAIL_VERIFY_API_KEY), detail: "EMAIL_VERIFY_API_KEY" },
     { integration: "calendar", mode: mode(!!(env.GMAIL_CLIENT_ID && env.GMAIL_REFRESH_TOKEN)), detail: "Google OAuth (shared with Gmail)" },
     { integration: "higgsfield", mode: mode(env.HIGGSFIELD_ENABLED === "true"), detail: "HIGGSFIELD_ENABLED + MCP access" },
+    { integration: "firecrawl", mode: mode(!!env.FIRECRAWL_API_KEY), detail: "FIRECRAWL_API_KEY" },
+    { integration: "anthropic", mode: mode(!!env.ANTHROPIC_API_KEY), detail: "ANTHROPIC_API_KEY (Opus build prompts + outreach)" },
   ];
 }
 
@@ -89,5 +97,7 @@ export function createIntegrations(
     calendar: createMockCalendar(),
     transcripts: createMockTranscripts(),
     higgsfield: createMockHiggsfield(log),
+    firecrawl: env.FIRECRAWL_API_KEY ? createFirecrawlAdapter(deps, log) : createMockFirecrawl(log),
+    llm: env.ANTHROPIC_API_KEY ? createLlmAdapter(deps, log) : createMockLlm(log),
   };
 }

@@ -1,8 +1,9 @@
 /**
  * End-to-end DRY-RUN demo: seeds realistic leads and walks the entire
  * pipeline — intake → audit → score → contact → draft → owner approval →
- * (simulated) send → replies → opportunity → preview build → billing draft →
- * approval → (simulated) payment link → daily report.
+ * (simulated) send → replies → opportunity → website brief (owner builds) →
+ * ship (owner's repo, simulated) → delivery email → billing draft → approval →
+ * (simulated) payment link → daily report.
  *
  * Run: npm run demo
  * Everything is simulated; no external call leaves the machine.
@@ -10,7 +11,7 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { newTraceId } from "@william/core";
-import { decideApproval } from "./approvals";
+import { decideApproval, requestApproval } from "./approvals";
 import { createContext } from "./context";
 import { generateDailyReport } from "./reports";
 import { runUntilEmpty } from "./runner";
@@ -76,9 +77,30 @@ async function main(): Promise<void> {
   }
   await runUntilEmpty(ctx, 100, futureClock);
   const opp = ctx.store.opportunities.list()[0];
-  say(`4) Replies processed: ${ctx.store.replyEvents.count()} total → ${ctx.store.replyEvents.count({ status: "positive" })} positive (opportunity created, owner notified, call slots suggested, preview queued), ${ctx.store.replyEvents.count({ status: "unsubscribe" })} unsubscribe honored → do-not-contact.`);
-  const preview = ctx.store.siteProjects.list()[0];
-  if (preview) say(`   Preview site generated: ${preview.previewPath} (template ${preview.templateId}).\n`);
+  say(`4) Replies processed: ${ctx.store.replyEvents.count()} total → ${ctx.store.replyEvents.count({ status: "positive" })} positive (opportunity created, owner notified, call slots suggested, website brief generated), ${ctx.store.replyEvents.count({ status: "unsubscribe" })} unsubscribe honored → do-not-contact.`);
+  const brief = ctx.store.websiteBriefs.list()[0];
+  if (brief) say(`   📋 Website brief generated for the owner (target ${brief.targetModel}, ${brief.weaknesses.length} weaknesses to fix) — paste into Fable/Opus to build.\n`);
+
+  // 4b) Owner builds the site externally, marks it ready with a repo URL → ship
+  //     (dry-run prod deploy) → delivery email drafted for approval.
+  if (brief) {
+    ctx.store.websiteBriefs.save({ ...brief, repoUrl: "https://github.com/owner/demo-site" });
+    const shipApproval = requestApproval(ctx, {
+      gate: "DEPLOY_PRODUCTION",
+      subjectType: "WebsiteBrief",
+      subjectId: brief.id,
+      leadId: brief.leadId,
+      title: "demo: ship owner-built site",
+      detail: "https://github.com/owner/demo-site",
+      traceId: newTraceId(),
+    });
+    decideApproval(ctx, shipApproval.id, "granted", "demo: owner approved the ship");
+    ctx.store.queue.enqueue({ type: "site.ship", payload: { websiteBriefId: brief.id, approvalRequestId: shipApproval.id }, traceId: shipApproval.traceId, leadId: brief.leadId });
+    await runUntilEmpty(ctx, 50, futureClock);
+    const shipped = ctx.store.websiteBriefs.get(brief.id);
+    const delivery = ctx.store.outreachDrafts.list().find((d) => d.variant === "delivery-1");
+    say(`4b) Owner shipped the finished repo → brief is ${shipped?.status} (production deploy SIMULATED), delivery email ${delivery ? "drafted (awaiting owner approval)" : "not drafted"}.\n`);
+  }
 
   // 5) Billing draft + approval
   if (opp) {

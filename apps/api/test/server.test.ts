@@ -135,11 +135,13 @@ describe("owner-triggered preview deploy API", () => {
   }
 
   it("409s when the project has no artifact", async () => {
+    ctx.config.williamBuildsWebsites = true;
     const project = insertProject(null);
     expect((await authed(`/api/site-projects/${project.id}/deploy-preview`, { method: "POST" })).status).toBe(409);
   });
 
   it("enqueues deploy.preview and records a dry-run deployment", async () => {
+    ctx.config.williamBuildsWebsites = true;
     const project = insertProject("C:/tmp/preview/index.html");
     const res = await authed(`/api/site-projects/${project.id}/deploy-preview`, { method: "POST" });
     expect(res.status).toBe(202);
@@ -213,6 +215,7 @@ describe("site project routes (revision loop + deploy approval)", () => {
   let leadId: string;
 
   it("positive reply builds a preview project (inline worker)", async () => {
+    ctx.config.williamBuildsWebsites = true; // builder-on: positive reply builds a preview to revise/deploy
     await authed("/api/leads", {
       method: "POST",
       body: JSON.stringify({ companyName: "Deploy Flow Cafe", websiteUrl: "https://deployflow.example.com", niche: "coffee_shop", city: "Ithaca" }),
@@ -227,6 +230,7 @@ describe("site project routes (revision loop + deploy approval)", () => {
   });
 
   it("revision with structured overrides is applied inline and shows in the timeline", async () => {
+    ctx.config.williamBuildsWebsites = true;
     const res = await authed(`/api/site-projects/${projectId}/revisions`, {
       method: "POST",
       body: JSON.stringify({ request: "new tagline please", overrides: { tagline: "Espresso, properly." } }),
@@ -240,11 +244,13 @@ describe("site project routes (revision loop + deploy approval)", () => {
   });
 
   it("revision without request text is rejected", async () => {
+    ctx.config.williamBuildsWebsites = true;
     const res = await authed(`/api/site-projects/${projectId}/revisions`, { method: "POST", body: JSON.stringify({ overrides: {} }) });
     expect(res.status).toBe(400);
   });
 
   it("request-deploy creates a DEPLOY_PRODUCTION approval; granting it deploys dry-run only", async () => {
+    ctx.config.williamBuildsWebsites = true;
     const res = await authed(`/api/site-projects/${projectId}/request-deploy`, { method: "POST" });
     expect(res.status).toBe(201);
     const { approval } = (await res.json()) as { approval: { id: string; gate: string; status: string } };
@@ -266,6 +272,42 @@ describe("site project routes (revision loop + deploy approval)", () => {
 
   it("404s on unknown projects", async () => {
     expect((await authed("/api/site-projects/site_nope/request-deploy", { method: "POST" })).status).toBe(404);
+    expect((await authed("/api/site-projects/site_nope/revisions", { method: "POST", body: JSON.stringify({ request: "x" }) })).status).toBe(404);
+  });
+});
+
+describe("builder routes disabled when WILLIAM_BUILDS_WEBSITES=false (default)", () => {
+  it("revisions, request-deploy, and deploy-preview all return 403 builder_disabled", async () => {
+    ctx.config.williamBuildsWebsites = false;
+    const now = new Date().toISOString();
+    const project = ctx.store.siteProjects.insert({
+      id: `sp_off_${Math.random().toString(36).slice(2, 10)}`,
+      createdAt: now,
+      updatedAt: now,
+      leadId: `lead_off_${Math.random().toString(36).slice(2, 8)}`,
+      opportunityId: null,
+      templateId: "barber-classic",
+      niche: "barbershop",
+      status: "preview_ready",
+      previewUrl: null,
+      previewPath: "C:/tmp/preview/index.html", // has an artifact: proves 403 is the flag, not a 409
+      stack: "static",
+      buildPath: null,
+      screenshotPaths: [],
+      rationale: "",
+      companyData: {},
+      missingInputs: [],
+      qualityCheck: null,
+    });
+    const rev = await authed(`/api/site-projects/${project.id}/revisions`, {
+      method: "POST",
+      body: JSON.stringify({ request: "change tagline", overrides: { tagline: "x" } }),
+    });
+    expect(rev.status).toBe(403);
+    expect(((await rev.json()) as { error: string }).error).toBe("builder_disabled");
+    expect((await authed(`/api/site-projects/${project.id}/request-deploy`, { method: "POST" })).status).toBe(403);
+    expect((await authed(`/api/site-projects/${project.id}/deploy-preview`, { method: "POST" })).status).toBe(403);
+    // Unknown projects still 404 (the flag check never masks not_found).
     expect((await authed("/api/site-projects/site_nope/revisions", { method: "POST", body: JSON.stringify({ request: "x" }) })).status).toBe(404);
   });
 });

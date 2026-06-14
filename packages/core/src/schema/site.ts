@@ -51,7 +51,10 @@ export const SiteRevision = BaseEntity.extend({
 export type SiteRevision = z.infer<typeof SiteRevision>;
 
 export const DeploymentRecord = BaseEntity.extend({
-  siteProjectId: Id,
+  /** Set for William-built artifacts; null when shipping the owner's repo (see websiteBriefId). */
+  siteProjectId: Id.nullable(),
+  /** Set when site.ship deploys the owner's finished repo (business-head path). */
+  websiteBriefId: Id.nullable().default(null),
   target: z.enum(["preview", "production"]),
   provider: z.literal("vercel"),
   status: z.enum(["pending", "dry_run", "deployed", "failed", "rolled_back"]),

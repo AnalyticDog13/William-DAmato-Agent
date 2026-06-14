@@ -7,6 +7,7 @@ import { LeadsPage } from "./pages/LeadsPage";
 import { LeadDetail } from "./pages/LeadDetail";
 import { Policies } from "./pages/Policies";
 import { Experiments } from "./pages/Experiments";
+import { WebsiteBriefs } from "./pages/WebsiteBriefs";
 import { CollectionPage, type Section } from "./pages/CollectionPage";
 
 interface NavEntry {
@@ -14,6 +15,8 @@ interface NavEntry {
   label: string;
   sections?: Section[];
   group?: string;
+  /** Site Projects shows a "builder disabled" banner while WILLIAM_BUILDS_WEBSITES is off. */
+  builderGated?: boolean;
 }
 
 const NAV: NavEntry[] = [
@@ -27,11 +30,12 @@ const NAV: NavEntry[] = [
   ] },
   { path: "/replies", label: "Replies", sections: [{ title: "Reply Events", collection: "replies", columns: ["leadId", "intent", "intentConfidence", "bodyExcerpt", "recommendedNextStep"] }] },
   { path: "/opportunities", label: "Opportunities / Deals", sections: [{ title: "Opportunities", collection: "opportunities", columns: ["leadId", "stage", "valueUsd", "recommendedNextStep"] }] },
-  { path: "/site-projects", label: "Site Projects", sections: [
+  { path: "/website-briefs", label: "Website Briefs", group: "Pipeline" },
+  { path: "/site-projects", label: "Site Projects", builderGated: true, sections: [
     { title: "Projects", collection: "site-projects", columns: ["leadId", "status", "templateId", "previewPath", "missingInputs"] },
     { title: "Revisions", collection: "site-revisions", columns: ["siteProjectId", "status", "request"] },
   ] },
-  { path: "/deployments", label: "Deployments", sections: [{ title: "Deployments", collection: "deployments", columns: ["siteProjectId", "target", "status", "url"] }] },
+  { path: "/deployments", label: "Deployments", sections: [{ title: "Deployments", collection: "deployments", columns: ["siteProjectId", "websiteBriefId", "target", "status", "url"] }] },
   { path: "/billing", label: "Billing", sections: [
     { title: "Invoice Drafts", collection: "invoice-drafts", columns: ["leadId", "kind", "status", "amountUsd", "url"] },
     { title: "Payments", collection: "payments", columns: ["leadId", "status", "amountUsd", "paidAt"] },
@@ -132,8 +136,9 @@ export function App() {
           <Route path="/leads/:id" element={<LeadDetail />} />
           <Route path="/policies" element={<Policies />} />
           <Route path="/experiments" element={<Experiments />} />
+          <Route path="/website-briefs" element={<WebsiteBriefs />} />
           {NAV.filter((n) => n.sections).map((n) => (
-            <Route key={n.path} path={n.path} element={<CollectionPage title={n.label} sections={n.sections!} />} />
+            <Route key={n.path} path={n.path} element={<CollectionPage title={n.label} sections={n.sections!} builderGated={n.builderGated} />} />
           ))}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -81,11 +81,29 @@ function SectionTable({ section }: { section: Section }) {
   );
 }
 
-export function CollectionPage({ title, sections }: { title: string; sections: Section[] }) {
+export function CollectionPage({ title, sections, builderGated }: { title: string; sections: Section[]; builderGated?: boolean }) {
+  const [builderOn, setBuilderOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!builderGated) return;
+    api<{ williamBuildsWebsites?: boolean }>("/api/overview")
+      .then((r) => setBuilderOn(!!r.williamBuildsWebsites))
+      .catch(() => setBuilderOn(null));
+  }, [builderGated]);
+
   return (
     <>
       <h2>{title}</h2>
       <p className="sub">Searchable view over the runtime database.</p>
+      {builderGated && builderOn === false && (
+        <div className="panel">
+          <p>
+            <span className="badge red">builder disabled</span>{" "}
+            William's website builder is off (WILLIAM_BUILDS_WEBSITES=false). William generates a build prompt for you
+            on the <Link to="/website-briefs">Website Briefs</Link> page instead of building previews himself. Set
+            WILLIAM_BUILDS_WEBSITES=true to re-enable this pipeline.
+          </p>
+        </div>
+      )}
       {sections.map((s) => <SectionTable key={s.collection} section={s} />)}
     </>
   );

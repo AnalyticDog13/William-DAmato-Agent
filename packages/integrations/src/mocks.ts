@@ -1,14 +1,17 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { newId, type Logger, type PolicyTicket } from "@william/core";
+import { synthesizeCompanyFacts, templateBuildPrompt } from "./brief-prompt";
 import type {
   CalendarAdapter,
   DiscoveredBusiness,
   EmailAdapter,
   EnrichmentAdapter,
   ExecutionResult,
+  FirecrawlAdapter,
   GithubAdapter,
   HiggsfieldAdapter,
   InstantlyAdapter,
+  LlmAdapter,
   PlacesAdapter,
   StripeAdapter,
   TranscriptIngestionAdapter,
@@ -196,6 +199,35 @@ export function createMockTranscripts(): TranscriptIngestionAdapter {
         }
       }
       return insights;
+    },
+  };
+}
+
+export function createMockFirecrawl(log: Logger): FirecrawlAdapter {
+  return {
+    name: "mock-firecrawl",
+    async scrapeCompany(ticket, url, hints) {
+      requireTicket(ticket, "firecrawl.scrapeCompany");
+      log.info("mock firecrawl scrapeCompany", { url, dryRun: ticket.dryRun });
+      // Synthesize from audit-derived hints — no network, demo/keyless works.
+      return synthesizeCompanyFacts(url, hints);
+    },
+  };
+}
+
+export function createMockLlm(log: Logger): LlmAdapter {
+  return {
+    name: "mock-llm",
+    async generateBuildPrompt(ticket, input) {
+      requireTicket(ticket, "llm.generateBuildPrompt");
+      log.info("mock llm generateBuildPrompt", { company: input.companyName, dryRun: ticket.dryRun });
+      // Pure templating — NO LLM call, so no text ever enters a real prompt.
+      return templateBuildPrompt(input);
+    },
+    async generateOutreachCopy(ticket) {
+      requireTicket(ticket, "llm.generateOutreachCopy");
+      // No real LLM: signal "use your deterministic template" by returning null.
+      return null;
     },
   };
 }

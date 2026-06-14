@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "William D'Amato — agentic sales-and-delivery platform for winning website clients, with strict owner-approval gates.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.12"

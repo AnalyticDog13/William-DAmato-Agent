@@ -39,6 +39,7 @@ describe("preview quality check (playwright mode)", () => {
 
     // Switch to playwright mode with a null launcher AFTER the mock audit ran,
     // then trigger a preview build directly.
+    ctx.config.williamBuildsWebsites = true;
     ctx.config.auditorMode = "playwright";
     ctx.browserLauncher = async () => null;
     ctx.store.queue.enqueue({ type: "preview.build", payload: { leadId: l.id }, traceId: newTraceId(), leadId: l.id });
@@ -54,6 +55,7 @@ describe("preview quality check (playwright mode)", () => {
 
 describe("phase D: react builds, revision loop, production deploy", () => {
   async function buildProject(name: string) {
+    ctx.config.williamBuildsWebsites = true; // builder tests exercise the flag-on (re-enabled) path
     ingestLead(ctx, lead(name, `https://${name.toLowerCase().replace(/\s+/g, "-")}.example.com`));
     await runUntilEmpty(ctx, 100, futureClock);
     const l = ctx.store.leads.list()[0]!;
@@ -347,6 +349,7 @@ describe("lead pipeline (dry run, mocks)", () => {
   });
 
   it("positive reply creates opportunity, call suggestion, owner notification, and preview", async () => {
+    ctx.config.williamBuildsWebsites = true; // flag-on path still builds a preview on positive reply
     ingestLead(ctx, lead("Test Barbers"));
     await runUntilEmpty(ctx, 100, futureClock);
     const l = ctx.store.leads.list()[0]!;
@@ -392,6 +395,7 @@ describe("lead pipeline (dry run, mocks)", () => {
 
 describe("owner-triggered preview deploys (phase E, advisory D4)", () => {
   async function buildProject(name: string) {
+    ctx.config.williamBuildsWebsites = true; // builder tests exercise the flag-on (re-enabled) path
     ingestLead(ctx, lead(name, `https://${name.toLowerCase().replace(/\s+/g, "-")}.example.com`));
     await runUntilEmpty(ctx, 100, futureClock);
     const l = ctx.store.leads.list()[0]!;
@@ -430,6 +434,236 @@ describe("owner-triggered preview deploys (phase E, advisory D4)", () => {
     expect(deployment.target).toBe("preview");
     expect(deployment.status).toBe("dry_run");
     expect(ctx.store.queue.list({ status: "dead" })).toHaveLength(0);
+  });
+});
+
+describe("business-head brief generation (WILLIAM_BUILDS_WEBSITES=false, the default)", () => {
+  it("a positive reply generates a WebsiteBrief for the owner instead of building a preview", async () => {
+    ingestLead(ctx, lead("Brief Barbers"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+    ctx.store.queue.enqueue({
+      type: "reply.process",
+      payload: { leadId: l.id, text: "Yes! Send the mockup — how much?", provider: "instantly" },
+      traceId: newTraceId(),
+      leadId: l.id,
+    });
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    // Opportunity is created exactly as before; the owner is still notified.
+    expect(ctx.store.opportunities.count()).toBe(1);
+    // Business-head path: a brief, NOT a self-built site project.
+    expect(ctx.store.siteProjects.count()).toBe(0);
+
+    const brief = ctx.store.websiteBriefs.list({ leadId: l.id })[0]!;
+    expect(brief).toBeDefined();
+    expect(brief.status).toBe("ready");
+    expect(brief.opportunityId).toBeTruthy();
+    expect(brief.targetModel).toBe("fable-5");
+    // owner-required notes always present in the prompt
+    expect(brief.buildPrompt).toMatch(/mobile/i);
+    expect(brief.buildPrompt).toMatch(/awwward/i);
+    expect(brief.buildPrompt).toContain("Brief Barbers");
+
+    const note = ctx.store.activity.list({ leadId: l.id }).find((a) => /brief/i.test(a.message));
+    expect(note).toBeDefined();
+    expect(ctx.store.queue.list({ status: "dead" })).toHaveLength(0);
+  });
+});
+
+describe("Opus-generated outreach copy (with the required lines guaranteed)", () => {
+  it("uses valid Opus copy and guarantees the opt-out line at the bottom", async () => {
+    ctx.integrations.llm.generateOutreachCopy = async () => ({
+      subject: "noticed something on your site",
+      // Opus copy that includes Cornell + mockup but (deliberately) NOT the opt-out line:
+      body: "Hi there,\n\nI'm Will, a Cornell student. Your site loads slowly on mobile — I already built a free mockup you can have. OPUSMARKER",
+      generatedBy: "opus-4-8",
+    });
+    ingestLead(ctx, lead("Followup Barbers", "https://followup-barbers.example.com"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const approval = ctx.store.approvals.list({ status: "pending" })[0];
+    expect(approval).toBeDefined();
+    const draft = ctx.store.outreachDrafts.get(approval!.subjectId)!;
+    expect(draft.body).toContain("OPUSMARKER"); // the Opus copy was used
+    expect(draft.body).toContain("I'm not interested"); // opt-out guaranteed at the bottom
+    expect(draft.body).toMatch(/Cornell/);
+    expect(draft.body).toMatch(/mockup/);
+    expect(draft.variant.startsWith("v")).toBe(true); // experiment variant preserved
+  });
+
+  it("falls back to the template when Opus copy is missing a required line", async () => {
+    ctx.integrations.llm.generateOutreachCopy = async () => ({
+      subject: "hi",
+      body: "OPUSMARKER quick note", // no Cornell, no mockup → must be rejected
+      generatedBy: "opus-4-8",
+    });
+    ingestLead(ctx, lead("Fallback Barbers", "https://fallback-barbers.example.com"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const approval = ctx.store.approvals.list({ status: "pending" })[0];
+    expect(approval).toBeDefined();
+    const draft = ctx.store.outreachDrafts.get(approval!.subjectId)!;
+    expect(draft.body).not.toContain("OPUSMARKER"); // rejected — template used instead
+    expect(draft.body).toMatch(/Cornell/);
+    expect(draft.body).toContain("I'm not interested");
+  });
+
+  it("with the default mock LLM (no key) the template copy is used unchanged", async () => {
+    ingestLead(ctx, lead("Chains Barbers", "https://chains-barbers.example.com"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const approval = ctx.store.approvals.list({ status: "pending" })[0];
+    expect(approval).toBeDefined();
+    const draft = ctx.store.outreachDrafts.get(approval!.subjectId)!;
+    expect(draft.body).toMatch(/Cornell/);
+    expect(draft.body).toMatch(/mockup/);
+    expect(draft.body).toContain("I'm not interested");
+  });
+});
+
+describe("site.ship (owner ships the finished repo, builder off)", () => {
+  async function readyBrief(name: string) {
+    ingestLead(ctx, lead(name, `https://${name.toLowerCase().replace(/\s+/g, "-")}.example.com`));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+    ctx.store.queue.enqueue({
+      type: "reply.process",
+      payload: { leadId: l.id, text: "Yes please, build it!", provider: "manual" },
+      traceId: newTraceId(),
+      leadId: l.id,
+    });
+    await runUntilEmpty(ctx, 100, futureClock);
+    const brief = ctx.store.websiteBriefs.list({ leadId: l.id })[0]!;
+    return { lead: l, brief };
+  }
+
+  function grantShip(briefId: string, leadId: string, repoUrl: string) {
+    const brief = ctx.store.websiteBriefs.get(briefId)!;
+    ctx.store.websiteBriefs.save({ ...brief, repoUrl });
+    const approval = requestApproval(ctx, {
+      gate: "DEPLOY_PRODUCTION",
+      subjectType: "WebsiteBrief",
+      subjectId: briefId,
+      leadId,
+      title: "Ship site",
+      detail: repoUrl,
+      traceId: newTraceId(),
+    });
+    decideApproval(ctx, approval.id, "granted", "ship it");
+    ctx.store.queue.enqueue({ type: "site.ship", payload: { websiteBriefId: briefId, approvalRequestId: approval.id }, traceId: newTraceId(), leadId });
+    return approval;
+  }
+
+  it("ships a granted brief: dry-run deploy, status shipped, and a delivery-email draft for approval", async () => {
+    const { lead: l, brief } = await readyBrief("Ship Barbers");
+    expect(brief.status).toBe("ready");
+    grantShip(brief.id, brief.leadId, "https://github.com/owner/ship-barbers");
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    const shipped = ctx.store.websiteBriefs.get(brief.id)!;
+    expect(shipped.status).toBe("shipped");
+    expect(shipped.repoUrl).toContain("github.com");
+
+    const dep = ctx.store.deployments.list().find((d) => d.websiteBriefId === brief.id)!;
+    expect(dep).toBeDefined();
+    expect(dep.target).toBe("production");
+    expect(dep.status).toBe("dry_run"); // local can NEVER deploy live
+
+    const delivery = ctx.store.outreachDrafts.list({ leadId: l.id }).find((d) => d.variant === "delivery-1")!;
+    expect(delivery).toBeDefined();
+    expect(delivery.status).toBe("pending_approval");
+    expect(delivery.body).toContain("I'm not interested"); // opt-out line intact
+    expect(ctx.store.queue.list({ status: "dead" })).toHaveLength(0);
+  });
+
+  it("site.ship without a granted DEPLOY_PRODUCTION approval is blocked — nothing deploys", async () => {
+    const { brief } = await readyBrief("Blocked Ship Barbers");
+    ctx.store.websiteBriefs.save({ ...brief, repoUrl: "https://github.com/owner/blocked" });
+    ctx.store.queue.enqueue({ type: "site.ship", payload: { websiteBriefId: brief.id }, traceId: newTraceId(), leadId: brief.leadId });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.deployments.count()).toBe(0);
+    expect(ctx.store.websiteBriefs.get(brief.id)!.status).toBe("ready");
+    expect(ctx.store.failures.list().some((f) => f.category === "policy_denied")).toBe(true);
+  });
+
+  it("approving the delivery email sends it dry-run and marks the lead a customer (no new follow-ups)", async () => {
+    const { lead: l, brief } = await readyBrief("Delivered Barbers");
+    grantShip(brief.id, brief.leadId, "https://github.com/owner/delivered");
+    await runUntilEmpty(ctx, 100, futureClock);
+    const delivery = ctx.store.outreachDrafts.list({ leadId: l.id }).find((d) => d.variant === "delivery-1")!;
+    const followupsBefore = ctx.store.queue.list().filter((j) => j.type === "outreach.followup" && j.leadId === l.id).length;
+    decideApproval(ctx, delivery.approvalRequestId!, "granted", "send it");
+    ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: delivery.id }, traceId: delivery.traceId, leadId: l.id });
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    expect(ctx.store.outreachDrafts.get(delivery.id)!.status).toBe("sent_dry_run");
+    expect(ctx.store.leads.get(l.id)!.status).toBe("customer");
+    const followupsAfter = ctx.store.queue.list().filter((j) => j.type === "outreach.followup" && j.leadId === l.id).length;
+    expect(followupsAfter).toBe(followupsBefore); // delivery never schedules a follow-up
+  });
+});
+
+describe("builder off-switch (WILLIAM_BUILDS_WEBSITES=false, the default)", () => {
+  async function auditedLead(name: string) {
+    ingestLead(ctx, lead(name, `https://${name.toLowerCase().replace(/\s+/g, "-")}.example.com`));
+    await runUntilEmpty(ctx, 100, futureClock);
+    return ctx.store.leads.list().find((l) => l.id)!;
+  }
+
+  // Build a real project with the builder temporarily ON, then flip OFF so the
+  // builder job under test must no-op against an existing artifact.
+  async function builtThenDisabled(name: string) {
+    ctx.config.williamBuildsWebsites = true;
+    const l = await auditedLead(name);
+    ctx.store.queue.enqueue({ type: "preview.build", payload: { leadId: l.id }, traceId: newTraceId(), leadId: l.id });
+    await runUntilEmpty(ctx, 100, futureClock);
+    const project = ctx.store.siteProjects.list({ leadId: l.id })[0]!;
+    ctx.config.williamBuildsWebsites = false;
+    return project;
+  }
+
+  it("preview.build no-ops: no site project is created, a builder_disabled note is written", async () => {
+    const l = await auditedLead("Preview Off Barbers");
+    ctx.store.queue.enqueue({ type: "preview.build", payload: { leadId: l.id }, traceId: newTraceId(), leadId: l.id });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.siteProjects.count()).toBe(0);
+    expect(ctx.store.activity.list({ leadId: l.id }).some((a) => a.kind === "builder_disabled")).toBe(true);
+    expect(ctx.store.queue.list({ status: "dead" })).toHaveLength(0);
+  });
+
+  it("site.revise no-ops: the artifact is never touched and no override is applied", async () => {
+    const project = await builtThenDisabled("Revise Off Barbers");
+    const before = JSON.stringify(project.companyData);
+    const now = nowIso();
+    const revision = ctx.store.siteRevisions.insert({
+      id: newId("rev"), createdAt: now, updatedAt: now, siteProjectId: project.id,
+      requestedBy: "owner" as const, request: "Change the tagline",
+      overrides: { tagline: "Should never be applied" }, status: "pending" as const, resultNote: "",
+    });
+    ctx.store.queue.enqueue({ type: "site.revise", payload: { revisionId: revision.id }, traceId: newTraceId(), leadId: null });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(JSON.stringify(ctx.store.siteProjects.get(project.id)!.companyData)).toBe(before);
+    expect(ctx.store.siteRevisions.get(revision.id)!.status).not.toBe("applied");
+    expect(ctx.store.activity.list({ leadId: project.leadId }).some((a) => a.kind === "builder_disabled")).toBe(true);
+  });
+
+  it("deploy.production no-ops even with a granted approval: nothing is deployed", async () => {
+    const project = await builtThenDisabled("Deploy Prod Off Barbers");
+    const approval = requestApproval(ctx, {
+      gate: "DEPLOY_PRODUCTION", subjectType: "SiteProject", subjectId: project.id,
+      leadId: project.leadId, title: "Deploy", detail: "d", traceId: newTraceId(),
+    });
+    decideApproval(ctx, approval.id, "granted", "ship it");
+    ctx.store.queue.enqueue({ type: "deploy.production", payload: { siteProjectId: project.id, approvalRequestId: approval.id }, traceId: newTraceId(), leadId: project.leadId });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.deployments.count()).toBe(0);
+    expect(ctx.store.activity.list({ leadId: project.leadId }).some((a) => a.kind === "builder_disabled")).toBe(true);
+  });
+
+  it("deploy.preview no-ops: nothing is deployed", async () => {
+    const project = await builtThenDisabled("Deploy Preview Off Barbers");
+    ctx.store.queue.enqueue({ type: "deploy.preview", payload: { siteProjectId: project.id }, traceId: newTraceId(), leadId: project.leadId });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.deployments.count()).toBe(0);
+    expect(ctx.store.activity.list({ leadId: project.leadId }).some((a) => a.kind === "builder_disabled")).toBe(true);
   });
 });
 

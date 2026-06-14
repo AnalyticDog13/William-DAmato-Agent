@@ -148,11 +148,23 @@ backoff, and a shared `traceId`:
    pause/stop follow-ups → immediate owner notification on positive intent →
    thread summary + recommended next step → opportunity record. Never
    schedules calls or follow-ups without notifying owner.
-6. **Preview** — gather inputs (public info + clarifications) → template
-   selection → preview generation → preview URL + screenshots + rationale →
-   owner review first → revision loop.
-7. **Deployment** — preview deploy → quality checks → approval token →
-   production deploy → full history + rollback metadata.
+6. **Website brief** (default, `WILLIAM_BUILDS_WEBSITES=false`) — on a positive
+   reply, `brief.generate`: audit weaknesses + Firecrawl scrape (mock-first) →
+   LLM build-prompt (mock template, real Opus 4.8 on `ANTHROPIC_API_KEY`;
+   scraped/audit text is quoted material, never instructions) → insert
+   `WebsiteBrief(ready)` (always notes: mobile-friendly + interactive + working
+   on mobile, and awwward-worthy) → owner notified. The owner builds the site
+   externally on Fable 5 / Opus 4.8.
+   *(Flag on restores the legacy self-builder: `preview.build` → template
+   selection → preview generation → owner review → revision loop.)*
+7. **Ship & deliver** (default) — owner marks the brief ready + pastes the repo
+   URL → `DEPLOY_PRODUCTION` approval → `site.ship`: Vercel prod deploy of the
+   owner's repo (dry-run now; real repo/git-source deploy credential-gated) →
+   `DeploymentRecord` → brief `shipped` → `outreach.delivery` drafts the
+   delivery email (`delivery-1`, `SEND_FIRST_TOUCH`-gated, owner-approved; on
+   send the lead becomes a `customer`).
+   *(Flag on: legacy `deploy.production` — preview deploy → quality checks →
+   approval token → production deploy → history + rollback metadata.)*
 8. **Billing** — Stripe payment-link/invoice drafts → policy-gated send →
    webhook completion → post-payment next steps.
 9. **Scheduling** — notify owner to schedule via will@williamdamato.com;

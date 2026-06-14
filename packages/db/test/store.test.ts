@@ -80,6 +80,38 @@ describe("Store repositories", () => {
     ).toThrow();
   });
 
+  it("round-trips website briefs keyed by lead, with brief defaults", () => {
+    const store = new Store(openMemoryDatabase());
+    const now = nowIso();
+    const brief = store.websiteBriefs.insert({
+      id: newId("wbf"),
+      createdAt: now,
+      updatedAt: now,
+      leadId: "lead_abc",
+      opportunityId: null,
+      websiteUrl: "https://barber.example.com",
+      weaknesses: ["no mobile layout"],
+      companyFacts: {
+        services: ["fades"],
+        hours: null,
+        photos: [],
+        about: "Old-school barber",
+        contact: { email: null, phone: null, address: null },
+      },
+      buildPrompt: "Build a mobile-friendly, awwward-worthy barber site.",
+      recommendedStack: { libs: ["GSAP"], plugins: [] },
+      targetModel: "fable-5",
+      generatedBy: "mock",
+      repoUrl: null,
+      status: "ready",
+    });
+    expect(store.websiteBriefs.get(brief.id)?.targetModel).toBe("fable-5");
+    expect(store.websiteBriefs.get(brief.id)?.status).toBe("ready");
+    expect(store.websiteBriefs.list({ leadId: "lead_abc" })).toHaveLength(1);
+    expect(store.websiteBriefs.list({ status: "ready" })).toHaveLength(1);
+    expect(() => store.websiteBriefs.insert({ ...brief, id: newId("wbf"), status: "bogus" as never })).toThrow();
+  });
+
   it("accepts the design lesson topic (transcript ingestion target)", () => {
     const store = new Store(openMemoryDatabase());
     const now = nowIso();
