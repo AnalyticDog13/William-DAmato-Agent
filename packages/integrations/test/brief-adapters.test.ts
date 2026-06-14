@@ -140,6 +140,9 @@ describe("llm mock adapter (build-prompt generation)", () => {
     expect(res.buildPrompt).toMatch(/GSAP/i);
     expect(res.buildPrompt).toMatch(/Three\.js/i);
     expect(res.buildPrompt).toMatch(/Chrome DevTools/i);
+    // owner-required: basic SEO (meta tags + structured data)
+    expect(res.buildPrompt).toMatch(/meta description/i);
+    expect(res.buildPrompt).toMatch(/structured data|JSON-LD/i);
     // quotes the real business + audit findings as material to transform
     expect(res.buildPrompt).toContain("Fade Factory");
     expect(res.buildPrompt).toContain("No mobile layout");

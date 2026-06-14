@@ -298,6 +298,7 @@ const BUILD_PROMPT_SYSTEM = [
   "Every build prompt MUST require a REAL, working backend (server handlers / API routes + a database) for all interactive features (contact, booking/lead capture, newsletter) — server-side validation, spam protection, persistence, and an owner notification on submit — not a static mockup.",
   "Every build prompt MUST require graceful loading states: skeleton/placeholder base layers and loading spinners before content/assets are ready, with zero layout shift and clear empty/error states.",
   "Every build prompt MUST promote GSAP (scroll/timeline animation) and Three.js (@react-three/fiber for 3D/WebGL) for the animations.",
+  "Every build prompt MUST require basic SEO: semantic HTML + heading hierarchy, a unique title and meta description per page, Open Graph/Twitter-card tags, descriptive image alt text, sitemap.xml + robots.txt, and JSON-LD LocalBusiness structured data.",
   "Every build prompt MUST require verifying build quality with Chrome DevTools before delivery: Lighthouse scores, the Performance panel (no long tasks/jank), a Console free of errors, and mobile device emulation with network throttling.",
   "Recommend an animation-forward stack (React + Vite, Three.js, GSAP, Framer Motion) PLUS a real backend (Next.js API routes/server actions, or Node/Express + Postgres/SQLite).",
 ].join("\n");

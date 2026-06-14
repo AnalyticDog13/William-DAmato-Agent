@@ -234,10 +234,11 @@ flag, not deleted.
   motion assets via Higgsfield**, **GSAP + Three.js animation**, a **real working
   backend** (API routes + DB, server-side validation, persistence, owner
   notification — not a static mockup), **graceful loading states** (skeleton/
-  placeholder base layers + spinners, no layout shift), and **Chrome DevTools
-  quality verification** (Lighthouse, Performance panel, clean Console, mobile
-  emulation). Wired into `detectCredentials` (`firecrawl`, `anthropic`) +
-  `createIntegrations`.
+  placeholder base layers + spinners, no layout shift), **basic SEO** (semantic
+  HTML, per-page title/meta description, OG/Twitter tags, alt text, sitemap/
+  robots, JSON-LD `LocalBusiness`), and **Chrome DevTools quality verification**
+  (Lighthouse, Performance panel, clean Console, mobile emulation). Wired into
+  `detectCredentials` (`firecrawl`, `anthropic`) + `createIntegrations`.
 - **`brief.generate` job** (`handleBriefGenerate`): audit weaknesses + scrape →
   LLM build-prompt → insert `WebsiteBrief(ready)` → owner notification.
 - **`site.ship` job** (`handleSiteShip`): granted `DEPLOY_PRODUCTION` (subject =
