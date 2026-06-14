@@ -228,12 +228,16 @@ flag, not deleted.
   `llm.generateBuildPrompt` (deterministic template mock; real Opus 4.8 on
   `ANTHROPIC_API_KEY`). Both ride operational tickets, simulate on `ticket.dryRun`
   (zero network in local), and fall back to the template on failure. Shared
-  `brief-prompt.ts` builds the prompt; the owner-required notes
-  (**mobile-friendly + interactive + fully working on mobile**,
-  **awwward-winning worthy**, and **generate visual/motion assets with
-  Higgsfield**) are baked into every prompt (both the template and
-  `BUILD_PROMPT_SYSTEM`). Wired into `detectCredentials` (`firecrawl`,
-  `anthropic`) + `createIntegrations`.
+  `brief-prompt.ts` builds the prompt; the owner-required notes are baked into
+  every prompt (both the template and `BUILD_PROMPT_SYSTEM`): **mobile-friendly +
+  interactive + fully working on mobile**, **awwward-winning worthy**, **visual/
+  motion assets via Higgsfield**, **GSAP + Three.js animation**, a **real working
+  backend** (API routes + DB, server-side validation, persistence, owner
+  notification — not a static mockup), **graceful loading states** (skeleton/
+  placeholder base layers + spinners, no layout shift), and **Chrome DevTools
+  quality verification** (Lighthouse, Performance panel, clean Console, mobile
+  emulation). Wired into `detectCredentials` (`firecrawl`, `anthropic`) +
+  `createIntegrations`.
 - **`brief.generate` job** (`handleBriefGenerate`): audit weaknesses + scrape →
   LLM build-prompt → insert `WebsiteBrief(ready)` → owner notification.
 - **`site.ship` job** (`handleSiteShip`): granted `DEPLOY_PRODUCTION` (subject =
@@ -329,9 +333,12 @@ env with `FIRECRAWL_API_KEY` (local always dry-run → synth).
   stay hermetic) and deliberately NOT in `demo.ts` (the demo stays a hermetic
   dry-run). Put `.env` at the repo root; `loadConfig` still forces dry-run in
   local regardless of its contents (invariant 3 intact). Compliance PASS.
-- **Build prompts now require Higgsfield** for visual/motion asset generation —
-  one owner-required sentence added to both `templateBuildPrompt` and
-  `BUILD_PROMPT_SYSTEM` (static instruction text; no untrusted-data path).
+- **Build prompts now require Higgsfield + a real backend + loading states +
+  GSAP/Three.js + Chrome DevTools QA** — owner-required instruction lines added to
+  both `templateBuildPrompt` (new `## Backend & functionality` and `## Before
+  shipping — verify build quality with Chrome DevTools` sections) and
+  `BUILD_PROMPT_SYSTEM` (static instruction text; no untrusted-data path,
+  compliance PASS).
 
 ### NEXT STEPS (where to start next — all credential-gated, mock-first today)
 

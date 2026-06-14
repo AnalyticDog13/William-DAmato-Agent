@@ -295,7 +295,11 @@ const BUILD_PROMPT_SYSTEM = [
   "- awwward-winning worthy (bold, modern art direction with tasteful, performant motion), and",
   "- mobile-friendly, fully interactive, and fully working on mobile (mobile-first, every interaction usable on a phone).",
   "Every build prompt MUST instruct the builder to generate the hero, gallery, and other visual/motion assets with Higgsfield (AI image/video generation) so the imagery is bespoke and on-brand rather than generic stock.",
-  "Recommend an animation-forward stack (React + Vite, Three.js, GSAP, Framer Motion).",
+  "Every build prompt MUST require a REAL, working backend (server handlers / API routes + a database) for all interactive features (contact, booking/lead capture, newsletter) — server-side validation, spam protection, persistence, and an owner notification on submit — not a static mockup.",
+  "Every build prompt MUST require graceful loading states: skeleton/placeholder base layers and loading spinners before content/assets are ready, with zero layout shift and clear empty/error states.",
+  "Every build prompt MUST promote GSAP (scroll/timeline animation) and Three.js (@react-three/fiber for 3D/WebGL) for the animations.",
+  "Every build prompt MUST require verifying build quality with Chrome DevTools before delivery: Lighthouse scores, the Performance panel (no long tasks/jank), a Console free of errors, and mobile device emulation with network throttling.",
+  "Recommend an animation-forward stack (React + Vite, Three.js, GSAP, Framer Motion) PLUS a real backend (Next.js API routes/server actions, or Node/Express + Postgres/SQLite).",
 ].join("\n");
 
 /** User message: the business data fenced as quoted material to transform. */

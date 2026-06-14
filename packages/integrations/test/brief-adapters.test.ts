@@ -133,6 +133,13 @@ describe("llm mock adapter (build-prompt generation)", () => {
     expect(res.buildPrompt).toMatch(/awwward/i);
     // owner-required: generate visual assets with Higgsfield
     expect(res.buildPrompt).toMatch(/Higgsfield/i);
+    // owner-required: a real backend, loading/skeleton states, GSAP+Three.js, DevTools QA
+    expect(res.buildPrompt).toMatch(/backend/i);
+    expect(res.buildPrompt).toMatch(/spinner/i);
+    expect(res.buildPrompt).toMatch(/skeleton|placeholder base/i);
+    expect(res.buildPrompt).toMatch(/GSAP/i);
+    expect(res.buildPrompt).toMatch(/Three\.js/i);
+    expect(res.buildPrompt).toMatch(/Chrome DevTools/i);
     // quotes the real business + audit findings as material to transform
     expect(res.buildPrompt).toContain("Fade Factory");
     expect(res.buildPrompt).toContain("No mobile layout");

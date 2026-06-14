@@ -16,7 +16,10 @@ Higgsfield build-prompt note. Previous: Firecrawl `mergeScrape`; NEXT STEP #4.
   `packages/core/src/env.ts`, Node built-in, no dep). Put `.env` at the **repo
   root** (it's there, gitignored). Local still forces dry-run regardless. The
   demo stays hermetic (does NOT read `.env`). Build prompts now also require
-  **Higgsfield** for visual assets (one line in template + `BUILD_PROMPT_SYSTEM`).
+  **Higgsfield** (visual assets), a **real working backend** (API routes + DB,
+  not a static mockup), **loading/skeleton states + spinners**, **GSAP + Three.js**
+  animation, and **Chrome DevTools quality verification** (Lighthouse/Performance/
+  Console/mobile emulation) — in both `templateBuildPrompt` and `BUILD_PROMPT_SYSTEM`.
 - **187/187 tests green** (`npm test`), **typecheck clean** (`npm run typecheck`),
   **`npm run demo`** verified end-to-end on mocks (0 dead-letter jobs), **dashboard
   builds** (`npm run -w @william/dashboard build`).
