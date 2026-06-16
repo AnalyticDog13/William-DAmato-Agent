@@ -7,8 +7,13 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-14, after wiring `.env` auto-loading + adding the
-Higgsfield build-prompt note. Previous: Firecrawl `mergeScrape`; NEXT STEP #4.
+**Last updated:** 2026-06-16, end of the build session. Built this session
+(all committed + pushed to `william-business-head`, history scrubbed of the
+owner's personal email): LLM reply classification, LLM transcript extraction,
+Firecrawl `mergeScrape`, `.env` auto-loading, and the build-prompt quality bar
+(Higgsfield + real backend + loading states + GSAP/Three.js + basic SEO + Chrome
+DevTools QA). **Owner is filling in `.env` now → next session is ACTIVATION**
+(see step 1 below; `WILLIAM_ENV=staging` is the load-bearing switch).
 
 ## Current state
 
@@ -119,13 +124,22 @@ owner and ships the owner's repo instead of building sites himself.
 
 ## What still needs work (next steps — detail in CLAUDE.md "NEXT STEPS")
 
-All credential-gated; nothing blocks because it's mock-first. Priority order:
+Everything is built mock-first; the remaining work is **activation** (the owner is
+filling in `.env` now). Priority order:
 
-1. **Activate Anthropic + Firecrawl** — wired and the adapters are finalized
-   (LLM build-prompt/outreach/reply-classify/transcript + Firecrawl `mergeScrape`),
-   but local is always dry-run (templates/synth). Real path needs
-   `WILLIAM_ENV=staging` + the key; then re-run `compliance-reviewer` on the live
-   behavior and confirm real Firecrawl `about`/contact extraction against actual pages.
+1. **ACTIVATE — keys are landing.** Every adapter is finalized and wired; the only
+   thing between mock and real is config:
+   - **⚠️ Set `WILLIAM_ENV=staging` in `.env`.** This is load-bearing: with
+     `WILLIAM_ENV=local` (the `.env.example` default) EVERY adapter is forced to
+     dry-run regardless of which keys are present — nothing real happens. `.env`
+     now auto-loads at the worker/api/seed entry points (not the demo).
+   - Add keys (priority): `ANTHROPIC_API_KEY` (Opus build prompts / outreach /
+     reply-classify / transcript — highest leverage), then `FIRECRAWL_API_KEY`,
+     `STRIPE_SECRET_KEY` (test), `VERCEL_TOKEN`, `INSTANTLY_API_KEY` or Gmail OAuth,
+     `GOOGLE_MAPS_API_KEY`. Generate an `OWNER_API_TOKEN` for the dashboard/API.
+   - Grant the matching policy approval in the dashboard for any side-effecting gate.
+   - Then **re-run `compliance-reviewer` on the live text→prompt behavior** (all
+     LLM features) and confirm real Firecrawl `about`/contact extraction vs. real pages.
 2. **Real repo/git-source Vercel deploy for `site.ship`** (currently dry-runs the
    repo URL). Verify Vercel `framework:"vite"` + Instantly `pauseLead` with real keys.
 3. **Stripe test mode** — validate payment-link/invoice + webhook end to end.

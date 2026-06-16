@@ -344,16 +344,23 @@ env with `FIRECRAWL_API_KEY` (local always dry-run → synth).
 ### NEXT STEPS (where to start next — all credential-gated, mock-first today)
 
 Everything below is built mock-first and simulates until a key arrives; none of
-it blocks. Rough priority:
+it blocks. The owner is populating `.env` now, so the near-term work is
+**activation**, not construction. Rough priority:
 
-1. **Activate the LLM + scrape adapters** (`ANTHROPIC_API_KEY`, `FIRECRAWL_API_KEY`).
-   They're wired (`createIntegrations` selects real on key presence) and the
-   adapters are finalized (build-prompt/outreach/reply-classify/transcript on the
-   LLM side; `mergeScrape` on the scrape side) — but **local is always dry-run →
-   still templates/synth**. To exercise the real path you need a non-local env
-   (`WILLIAM_ENV=staging`) + the key, then re-run `compliance-reviewer` on the
-   live behavior (text→prompt) and confirm the real Firecrawl `about`/contact
-   extraction against actual pages.
+1. **ACTIVATE the adapters (keys landing).** All adapters are finalized and wired
+   (`createIntegrations` selects real on key presence; `.env` now auto-loads at the
+   worker/api/seed entry points via `loadDotEnv`). The gate between mock and real
+   is config:
+   - **⚠️ `WILLIAM_ENV=staging` is load-bearing.** With `WILLIAM_ENV=local`
+     (the `.env.example` default) `loadConfig` forces `dryRun=true` and every
+     adapter simulates — keys are read but NO real call happens. Set it to
+     `staging` (+ grant the matching gate approval) to exercise real paths. local
+     stays dry-run forever by design (invariant 3).
+   - Keys by leverage: `ANTHROPIC_API_KEY` (build prompts / outreach / reply
+     classification / transcript extraction) → `FIRECRAWL_API_KEY` (scrape →
+     richer briefs) → the rest below.
+   - Then **re-run `compliance-reviewer` on the live text→prompt behavior** and
+     confirm the real Firecrawl `about`/contact extraction against actual pages.
 2. **Real repo/git-source Vercel deploy for `site.ship`** — today it dry-runs the
    repo URL through `vercel.deploy(sourcePath=repoUrl)`. Real shipping needs a
    Vercel token + git-source wiring (OwnerRequest exists). Verify Vercel
