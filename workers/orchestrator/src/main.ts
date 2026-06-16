@@ -1,5 +1,5 @@
 /** Continuous orchestrator worker: processes the durable queue and writes the daily report at day rollover. */
-import { loadDotEnv } from "@william/core";
+import { loadDotEnv, newTraceId } from "@william/core";
 import { createContext } from "./context";
 import { ensureBootstrapOwnerRequests } from "./ownerRequests";
 import { generateDailyReport, generateWeeklyReport } from "./reports";
@@ -23,6 +23,17 @@ setInterval(() => {
     ctx.log.info("daily report generated", { date: lastReportDate });
   }
 }, 60_000).unref();
+
+// Poll Instantly for inbound replies when enabled (free alternative to the
+// Hypergrowth webhook). Each tick enqueues a durable instantly.pollReplies job;
+// disabled by default and inert in local (dry-run → pollInbound returns []).
+if (ctx.config.instantlyPollIntervalMs > 0) {
+  const enqueuePoll = () =>
+    ctx.store.queue.enqueue({ type: "instantly.pollReplies", payload: {}, traceId: newTraceId() });
+  enqueuePoll(); // poll once on startup
+  setInterval(enqueuePoll, ctx.config.instantlyPollIntervalMs).unref();
+  ctx.log.info("instantly reply polling enabled", { intervalMs: ctx.config.instantlyPollIntervalMs });
+}
 
 runForever(ctx).catch((err) => {
   ctx.log.error("worker crashed", { error: err instanceof Error ? err.message : String(err) });

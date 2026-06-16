@@ -147,6 +147,42 @@ describe("instantly real adapter", () => {
     expect(calls[0]!.headers.authorization).toBe("Bearer ik_1");
     expect(JSON.parse(calls[0]!.body)).toMatchObject({ email: "owner@biz.co", campaign: "camp_1" });
   });
+
+  it("pollInbound returns [] under dry-run with zero network", async () => {
+    const { impl, calls } = fakeFetch();
+    const inst = createInstantlyAdapter({ env: { INSTANTLY_API_KEY: "ik_1" }, fetchImpl: impl }, log);
+    const res = await inst.pollInbound(ticket(true), { limit: 50 });
+    expect(res).toEqual([]);
+    expect(calls.length).toBe(0);
+  });
+
+  it("pollInbound fetches received emails with bearer auth and normalizes them, live", async () => {
+    const { impl, calls } = fakeFetch([
+      {
+        items: [
+          { id: "em_1", from_address_email: "Lead@Biz.co", body: { text: "Yes please" } },
+          { id: "em_2", from_address_email: "two@biz.co", body: { text: "interested" } },
+          { id: "", from_address_email: "skip@biz.co", body: { text: "no id" } },
+        ],
+      },
+    ]);
+    const inst = createInstantlyAdapter({ env: { INSTANTLY_API_KEY: "ik_1" }, fetchImpl: impl }, log);
+    const res = await inst.pollInbound(ticket(false), { limit: 50 });
+    expect(calls[0]!.url).toContain("/api/v2/emails");
+    expect(calls[0]!.url).toContain("email_type=received");
+    expect(calls[0]!.url).toContain("preview_only=false");
+    expect(calls[0]!.headers.authorization).toBe("Bearer ik_1");
+    expect(res).toEqual([
+      { externalMessageId: "em_1", fromEmail: "lead@biz.co", text: "Yes please" },
+      { externalMessageId: "em_2", fromEmail: "two@biz.co", text: "interested" },
+    ]);
+  });
+
+  it("pollInbound fails closed to [] on API error", async () => {
+    const impl = (async () => new Response("nope", { status: 402 })) as typeof fetch;
+    const inst = createInstantlyAdapter({ env: { INSTANTLY_API_KEY: "ik_1" }, fetchImpl: impl }, log);
+    expect(await inst.pollInbound(ticket(false), {})).toEqual([]);
+  });
 });
 
 describe("gmail real adapter", () => {

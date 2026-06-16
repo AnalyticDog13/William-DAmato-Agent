@@ -341,6 +341,36 @@ env with `FIRECRAWL_API_KEY` (local always dry-run → synth).
   `BUILD_PROMPT_SYSTEM` (static instruction text; no untrusted-data path,
   compliance PASS).
 
+### Done (Instantly reply poller — free webhook alternative, 192 tests green)
+
+**Spec:** `docs/superpowers/plans/2026-06-16-instantly-reply-poller.md`. Instantly
+gates webhooks behind the $97/mo Hypergrowth tier; the v2 `GET /emails` API is on
+every plan. So inbound replies can be **polled** instead of pushed — same
+downstream pipeline, zero extra cost.
+
+- **Adapter** (`instantly.pollInbound` on `InstantlyAdapter` + `InboundEmail`
+  type): real adapter calls `GET /api/v2/emails?email_type=received&preview_only=false`
+  (Bearer auth), normalizes `{externalMessageId, fromEmail, text}`, returns `[]`
+  on `ticket.dryRun` (zero network in local) and **fail-closed `[]`** on any HTTP
+  error (never crashes the loop). Mock returns `[]`. `TODO(activation)`: confirm
+  live field names/pagination in staging (mirrors the `pauseLead` TODO).
+- **`instantly.pollReplies` job** (`handlePollReplies`): ungated operational READ
+  ticket → poll → resolve sender via `contacts.findByKey('email:…')` (unknown
+  senders ignored, same as the webhook) → **dedupe against persisted
+  `replyEvents.externalMessageId`** (serial FIFO queue guarantees the prior
+  `reply.process` ran first) → enqueue the existing `reply.process`. Inbound text
+  stays DATA → only ever feeds the fixed reply handler (invariant 1).
+- **Scheduling**: `instantlyPollIntervalMs` (env `INSTANTLY_POLL_INTERVAL_MS`,
+  default 0 = disabled) in `RuntimeConfig`; `main.ts` enqueues a poll job on that
+  interval when > 0. Off by default → demo/tests unchanged.
+- **Scope**: replies (and any bounce/unsub *text* that arrives as a received
+  email, handled by the existing classifier). Instantly's *native* bounce
+  (`i_status`) / unsubscribe-link events are not received emails and remain
+  webhook-only — DNC/unsub screening at draft+send (invariant 4) is unaffected.
+- **Compliance review 8/8 PASS**, no required fixes. Advisories INFO/LOW
+  (activation-time re-review of the live `/emails` shape; optional backoff on
+  repeated poll failures). No new policy gate.
+
 ### NEXT STEPS (where to start next — all credential-gated, mock-first today)
 
 Everything below is built mock-first and simulates until a key arrives; none of
@@ -361,6 +391,12 @@ it blocks. The owner is populating `.env` now, so the near-term work is
      richer briefs) → the rest below.
    - Then **re-run `compliance-reviewer` on the live text→prompt behavior** and
      confirm the real Firecrawl `about`/contact extraction against actual pages.
+   - **Inbound replies:** Instantly gates webhooks behind the $97/mo Hypergrowth
+     tier. The **reply poller** (above) is the free alternative — set
+     `INSTANTLY_POLL_INTERVAL_MS` (+ `emails:read` scope on the API key) to ingest
+     replies via the `/emails` API instead. Webhooks (`/webhooks/instantly`) still
+     work if you ever buy the tier; the poller dedupes against them. At staging,
+     re-review the live `/emails` response shape (the `TODO(activation)`).
 2. **Real repo/git-source Vercel deploy for `site.ship`** — today it dry-runs the
    repo URL through `vercel.deploy(sourcePath=repoUrl)`. Real shipping needs a
    Vercel token + git-source wiring (OwnerRequest exists). Verify Vercel

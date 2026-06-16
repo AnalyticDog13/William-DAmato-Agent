@@ -1247,6 +1247,35 @@ const handleTranscriptIngest: JobHandler = async (ctx, job) => {
   });
 };
 
+/**
+ * Poll Instantly's /emails API for inbound replies (free alternative to the
+ * Hypergrowth-gated webhook). Each polled message is DATA: it can only enqueue
+ * the fixed reply.process handler — never executed, never placed in a prompt
+ * (invariant 1). Ungated read; dry-run in local. Dedupes against persisted
+ * replyEvents by provider message id (the serial FIFO queue guarantees the
+ * prior reply.process has run before the next poll job).
+ */
+const handlePollReplies: JobHandler = async (ctx, job) => {
+  const ticket = operationalTicket(ctx, "instantly.pollInbound", { type: "InboundPoll", id: "instantly", leadId: null }, job.traceId);
+  const inbound = await ctx.integrations.instantly.pollInbound(ticket, { limit: 100 });
+  let enqueued = 0;
+  for (const msg of inbound) {
+    const contact = ctx.store.contacts.findByKey(`email:${msg.fromEmail.toLowerCase()}`)[0];
+    const leadId = contact?.leadId;
+    if (!leadId) continue; // not one of our leads — ignore, same as the webhook
+    const seen = ctx.store.replyEvents.list({ leadId }).some((r) => r.externalMessageId === msg.externalMessageId);
+    if (seen) continue;
+    ctx.store.queue.enqueue({
+      type: "reply.process",
+      payload: { leadId, text: msg.text, provider: "instantly", externalMessageId: msg.externalMessageId },
+      traceId: newTraceId(),
+      leadId,
+    });
+    enqueued++;
+  }
+  ctx.log.info("instantly poll complete", { fetched: inbound.length, enqueued, traceId: job.traceId });
+};
+
 export const JOB_HANDLERS: Record<string, JobHandler> = {
   "lead.audit": handleAudit,
   "lead.score": handleScore,
@@ -1256,6 +1285,7 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   "outreach.followup": handleFollowUp,
   "outreach.close": handleOutreachClose,
   "reply.process": handleReply,
+  "instantly.pollReplies": handlePollReplies,
   "brief.generate": handleBriefGenerate,
   "preview.build": handlePreviewBuild,
   "site.revise": handleSiteRevise,

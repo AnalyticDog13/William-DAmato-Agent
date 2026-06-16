@@ -36,6 +36,12 @@ export interface RuntimeConfig {
    * Flip to true to restore the full self-build pipeline (preview/revise/deploy).
    */
   williamBuildsWebsites: boolean;
+  /**
+   * How often (ms) to poll Instantly's /emails API for inbound replies, as a
+   * free alternative to the Hypergrowth-gated webhook. 0 disables polling
+   * (default). Inert in local (dry-run forces pollInbound to return []).
+   */
+  instantlyPollIntervalMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -66,5 +72,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
       minAccessibility: threshold(env.PREVIEW_MIN_ACCESSIBILITY, 80),
     },
     williamBuildsWebsites: env.WILLIAM_BUILDS_WEBSITES === "true",
+    instantlyPollIntervalMs: (() => {
+      const n = Number(env.INSTANTLY_POLL_INTERVAL_MS);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    })(),
   };
 }

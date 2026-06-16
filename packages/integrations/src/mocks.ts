@@ -71,6 +71,10 @@ export function createMockInstantly(log: Logger): InstantlyAdapter {
       requireTicket(ticket, "instantly.pauseLead");
       return simulated("instantly.pauseLead", `lead=${externalLeadId}`, "inst");
     },
+    async pollInbound(ticket) {
+      requireTicket(ticket, "instantly.pollInbound");
+      return []; // mock/dry-run surfaces no inbound mail
+    },
     verifyWebhookSignature: hmacSignatureValid,
   };
 }

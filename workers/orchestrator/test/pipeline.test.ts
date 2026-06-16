@@ -845,3 +845,30 @@ describe("weekly report", () => {
     expect(report.lessons.join()).toContain("v2-finding-first");
   });
 });
+
+describe("instantly reply poller", () => {
+  it("enqueues reply.process for known senders, ignores strangers, and dedupes", async () => {
+    ingestLead(ctx, lead("Poll Biz"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+    const contact = ctx.store.contacts.list({ leadId: l.id })[0]!;
+    const contactEmail = contact.email!;
+
+    ctx.integrations.instantly.pollInbound = async () => [
+      { externalMessageId: "m1", fromEmail: contactEmail, text: "Yes, very interested!" },
+      { externalMessageId: "m2", fromEmail: "stranger@nowhere.co", text: "who are you" },
+    ];
+
+    ctx.store.queue.enqueue({ type: "instantly.pollReplies", payload: {}, traceId: newTraceId() });
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    const events = ctx.store.replyEvents.list({ leadId: l.id });
+    expect(events.length).toBe(1); // stranger ignored
+    expect(events[0]!.externalMessageId).toBe("m1");
+
+    // Re-poll the same message → no duplicate reply.process.
+    ctx.store.queue.enqueue({ type: "instantly.pollReplies", payload: {}, traceId: newTraceId() });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.replyEvents.list({ leadId: l.id }).filter((e) => e.externalMessageId === "m1").length).toBe(1);
+  });
+});

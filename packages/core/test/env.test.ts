@@ -37,6 +37,13 @@ describe("loadConfig flags", () => {
     expect(loadConfig({ WILLIAM_BUILDS_WEBSITES: "false" }).williamBuildsWebsites).toBe(false);
     expect(loadConfig({ WILLIAM_BUILDS_WEBSITES: "1" }).williamBuildsWebsites).toBe(false);
   });
+
+  it("parses INSTANTLY_POLL_INTERVAL_MS (default 0 = disabled, rejects garbage)", () => {
+    expect(loadConfig({ WILLIAM_ENV: "local" }).instantlyPollIntervalMs).toBe(0);
+    expect(loadConfig({ WILLIAM_ENV: "staging", INSTANTLY_POLL_INTERVAL_MS: "300000" }).instantlyPollIntervalMs).toBe(300000);
+    expect(loadConfig({ WILLIAM_ENV: "local", INSTANTLY_POLL_INTERVAL_MS: "-5" }).instantlyPollIntervalMs).toBe(0);
+    expect(loadConfig({ WILLIAM_ENV: "local", INSTANTLY_POLL_INTERVAL_MS: "nope" }).instantlyPollIntervalMs).toBe(0);
+  });
 });
 
 describe("loadDotEnv", () => {

@@ -26,6 +26,16 @@ export interface EmailAdapter {
   send(ticket: PolicyTicket, email: OutboundEmail): Promise<ExecutionResult>;
 }
 
+/** A normalized inbound message fetched by polling (provider-agnostic shape). */
+export interface InboundEmail {
+  /** Provider message id — the dedup key. */
+  externalMessageId: string;
+  /** Lowercased sender address (the lead). */
+  fromEmail: string;
+  /** Plain-text body (data only — never executed). */
+  text: string;
+}
+
 export interface InstantlyAdapter {
   readonly name: string;
   pushLead(
@@ -33,6 +43,12 @@ export interface InstantlyAdapter {
     input: { email: string; firstName?: string; companyName?: string; campaignId?: string; customVariables?: Record<string, string> },
   ): Promise<ExecutionResult>;
   pauseLead(ticket: PolicyTicket, externalLeadId: string): Promise<ExecutionResult>;
+  /**
+   * Poll recent INBOUND replies (email_type=received). Ungated read; simulates
+   * to [] under ticket.dryRun (zero network in local). Fail-closed: returns []
+   * on any API error rather than throwing.
+   */
+  pollInbound(ticket: PolicyTicket, input?: { limit?: number }): Promise<InboundEmail[]>;
   verifyWebhookSignature(rawBody: string, signatureHeader: string | undefined, secret: string | undefined): boolean;
 }
 
