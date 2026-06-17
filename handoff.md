@@ -7,13 +7,48 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-16, end of the build session. Built this session
+**Last updated:** 2026-06-17 — ACTIVATION session (see "Activation status" below:
+keys added to `.env` + validated live; Gmail re-auth'd; Instantly plan-gated).
+Prior build session (2026-06-16) built
 (all committed + pushed to `william-business-head`, history scrubbed of the
 owner's personal email): LLM reply classification, LLM transcript extraction,
 Firecrawl `mergeScrape`, `.env` auto-loading, and the build-prompt quality bar
 (Higgsfield + real backend + loading states + GSAP/Three.js + basic SEO + Chrome
 DevTools QA). **Owner is filling in `.env` now → next session is ACTIVATION**
 (see step 1 below; `WILLIAM_ENV=staging` is the load-bearing switch).
+
+## Activation status — 2026-06-17 (keys landing)
+
+Owner populated `.env` and keys were validated with live auth pings (read-only
+endpoints; no sends, no pipeline). Still `WILLIAM_ENV=local` → everything is
+dry-run; no staging rehearsal yet.
+
+- **Validated (authenticate live):** Anthropic, Firecrawl, Vercel, Stripe (TEST
+  key), Google Places **v1** (legacy Places API is off — use v1), Gmail
+  (`gmail.send` scope only; adapter is send-only, Instantly is primary).
+- **Instantly:** API key is valid but **plan-gated (HTTP 402)** — owner is NOT
+  buying the sending plan yet. Reply **poller is wired** (`INSTANTLY_POLL_INTERVAL_MS`
+  `=300000`, confirmed enabled at worker boot). Two things still gate the real
+  SEND path: (1) buy a sending plan + activate the `will@…` mailbox (warmed ~3wk
+  but shows "not active" — likely the plan), (2) **`INSTANTLY_CAMPAIGN_ID` is NOT
+  in `.env`** (needed by `pushLead`). Inbound polling/replies don't need either.
+- **Gmail:** initial refresh token was `invalid_grant` (wrong-client mismatch);
+  regenerated via OAuth Playground with the `.env` client → now valid. Account is
+  Google **Workspace**, so the OAuth app is being switched to **User Type =
+  Internal** to stop the 7-day Testing-mode refresh-token expiry.
+- **Stripe webhook:** `STRIPE_WEBHOOK_SECRET` left blank. **Stripe CLI installed**
+  (winget `Stripe.StripeCli`); for local webhook testing use the `stripe listen`
+  signing secret. Real prod endpoint secret is a go-live item.
+- **Tooling:** Stripe CLI + Playwright Chromium present. **Pre-launch checklist
+  added to `CLAUDE.md`** ("⚠️ Before going LIVE") — test→live key swaps, blank
+  webhook secret, poll-interval, `OWNER_API_TOKEN` strength, gate approvals,
+  compliance re-review.
+- **Verified this session:** `npm run typecheck` clean, **192/192 tests**,
+  `npm run demo` end-to-end, worker boots clean and reads `.env`.
+- **Next:** add `INSTANTLY_CAMPAIGN_ID` when the plan is bought; then a staging
+  rehearsal (`WILLIAM_ENV=staging`) starting with READ/generation paths (Firecrawl
+  scrape + Anthropic build prompt), then re-run `compliance-reviewer` on the live
+  text→prompt behavior before enabling gated sends.
 
 ## Current state
 

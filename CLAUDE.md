@@ -76,6 +76,44 @@ deployment-manager, memory-manager, compliance-reviewer). Use them for their
 domains; compliance-reviewer is read-only and should review any change
 touching policy, outreach content, billing, or deployment code.
 
+## ⚠️ Before going LIVE (production) — credential & safety checklist
+
+**The current `.env` holds TEST / sandbox / placeholder credentials.** Every one
+of these MUST be swapped to a real production value before flipping to live, or
+the system will silently keep simulating (best case) or fail closed (worst case).
+Work this list top-to-bottom when activating production:
+
+- [ ] **Swap every credential from test → live.** In particular:
+  - [ ] `STRIPE_SECRET_KEY` — replace the **test** key (`sk_test_…`) with the
+        **live** key (`sk_live_…`).
+  - [ ] `STRIPE_WEBHOOK_SECRET` — currently **blank**. Create a real webhook
+        endpoint (Dashboard → Developers → Webhooks → `https://<domain>/webhooks/
+        stripe`, subscribe `checkout.session.completed` + `invoice.paid`) and
+        paste its signing secret (`whsec_…`). For *staging* testing, use the
+        `stripe listen --forward-to localhost:4000/webhooks/stripe` secret
+        instead. **Until a secret is set, payment-received confirmation is only
+        accepted in local dry-run** (`apps/api/src/webhooks.ts`).
+  - [ ] `ANTHROPIC_API_KEY`, `FIRECRAWL_API_KEY`, `GOOGLE_MAPS_API_KEY`,
+        `VERCEL_TOKEN`/`VERCEL_TEAM_ID`, `INSTANTLY_API_KEY`/`INSTANTLY_CAMPAIGN_ID`,
+        `GMAIL_*`, `GITHUB_TOKEN`, `ENRICHMENT_API_KEY`, `EMAIL_VERIFY_API_KEY`
+        — confirm each is a real production value, not a placeholder/test key.
+  - [ ] `OWNER_API_TOKEN` — a strong, unique random value (not a dev token).
+- [ ] **`INSTANTLY_POLL_INTERVAL_MS` must be set (non-zero).** We do NOT pay for
+      Instantly's webhook tier, so inbound replies arrive via the `/emails`
+      poller, NOT a webhook. Set e.g. `300000` (5 min) and ensure the API key has
+      the `emails:read` scope. **If this is `0`/unset, William never sees replies.**
+      `INSTANTLY_WEBHOOK_SECRET` staying blank is fine (see the Instantly note).
+- [ ] **`WILLIAM_ENV`**: rehearse at `staging` (sandbox creds) FIRST; only set
+      `production` once a real lead has flowed end-to-end in staging. local is
+      always dry-run by design (invariant 3) — it can never go live.
+- [ ] **Grant the matching policy-gate approvals** in the dashboard (sends,
+      payment requests, production deploys are all gated — granting a key does
+      nothing without the approval).
+- [ ] **Re-run `compliance-reviewer`** on the live text→prompt behavior once the
+      real Anthropic/Firecrawl paths actually execute (activation-time re-review).
+- [ ] **`npm test` green** and DNC/unsubscribe lists loaded before the first
+      live send.
+
 ## Status — where we are and where to continue
 
 **`handoff.md` (repo root) is the live session-handoff log** — what's done,
