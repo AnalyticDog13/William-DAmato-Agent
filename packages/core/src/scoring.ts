@@ -46,9 +46,6 @@ export function scoreLead(audit: WebsiteAudit): ScoreResult {
   if (reachable) add(10, "Published contact info found — reachable via business-published channels.");
   else add(-10, "No published contact info — needs enrichment before outreach.");
 
-  if (audit.robotsAllowed === false) {
-    add(-100, "robots.txt disallows crawling — respected; do not pursue via crawl-derived data.");
-  }
 
   score = Math.max(0, Math.min(100, score));
   const tier: LeadScoreTier = score >= 65 ? "hot" : score >= 40 ? "warm" : score >= 20 ? "cold" : "skip";
