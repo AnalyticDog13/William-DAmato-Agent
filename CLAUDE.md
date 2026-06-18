@@ -431,10 +431,11 @@ installed: **Stripe CLI** (winget `Stripe.StripeCli`) + **Playwright Chromium**.
   Hypergrowth-gated, and the poller already replaces those. A new **API V2 key** is
   in `INSTANTLY_API_KEY`, **`INSTANTLY_CAMPAIGN_ID` added**, and the `will@…`
   mailbox (warmed ~3 wk) activated in the campaign. Send cap 5,000/mo (≫ the
-  ~600–1,500/mo a single mailbox at 20–50/day uses). **⚠️ VERIFY AT NEXT SESSION
-  START:** re-run the Instantly auth ping — it should now return **200** (was
-  **402 Payment Required** pre-plan). Owner said "assume it works"; confirm before
-  relying on the send path.
+  ~600–1,500/mo a single mailbox at 20–50/day uses). **VERIFIED LIVE 2026-06-17:**
+  auth ping returns **200** (was 402 pre-plan); `GET /campaigns` lists the live
+  "Websites" campaign matching `INSTANTLY_CAMPAIGN_ID`; `emails:read` (poller scope)
+  returns 200. Only `leads:create`/`leads:update` (write scopes) are unverified —
+  exercised on the first real `pushLead` at staging.
 - **Stripe webhook:** `STRIPE_WEBHOOK_SECRET` intentionally blank. For local/staging
   payment testing use the `stripe listen` signing secret; a real Dashboard endpoint
   secret is a go-live item.
@@ -451,9 +452,10 @@ installed: **Stripe CLI** (winget `Stripe.StripeCli`) + **Playwright Chromium**.
 Keys are in `.env` and validated (see "Done (Activation)" above). The remaining
 work is exercising the REAL paths and finishing the last two integrations:
 
-1. **Verify Instantly, then STAGING REHEARSAL.** First re-run the Instantly auth
-   ping (expect **200** now that Growth is bought; was 402). Then the load-bearing
-   switch: **`WILLIAM_ENV=staging`** (local forces dry-run forever — invariant 3).
+1. **STAGING REHEARSAL.** (Instantly API already verified live 2026-06-17 — key
+   200, campaign + `emails:read` confirmed; `leads:create/update` write scopes get
+   exercised on the first real send.) The load-bearing switch:
+   **`WILLIAM_ENV=staging`** (local forces dry-run forever — invariant 3).
    Grant the matching **policy-gate approvals** in the dashboard (a key alone does
    nothing). Rehearse the SAFE paths FIRST — Firecrawl scrape + Anthropic
    build-prompt/reply-classification (reads/generation, no outbound, no payment) —

@@ -9,8 +9,8 @@
 
 **Last updated:** 2026-06-17 — ACTIVATION session (see "Activation status" below:
 all keys in `.env` + validated live; Gmail re-auth'd + app set to Internal;
-Instantly Growth plan bought + new API V2 key). **Next session: verify the
-Instantly ping (402→200), then run the staging rehearsal.** Prior build session
+Instantly Growth plan bought + new API V2 key, **verified live 200**). **Next
+session: run the staging rehearsal (`WILLIAM_ENV=staging`).** Prior build session
 (2026-06-16) built
 (all committed + pushed to `william-business-head`, history scrubbed of the
 owner's personal email): LLM reply classification, LLM transcript extraction,
@@ -39,9 +39,10 @@ dry-run; **no staging rehearsal done yet.**
   in `INSTANTLY_API_KEY`, **`INSTANTLY_CAMPAIGN_ID` added**, `will@…` mailbox
   (warmed ~3 wk) activated in the campaign. Send cap 5,000/mo (≫ usage). Poller
   wired + confirmed at worker boot (`INSTANTLY_POLL_INTERVAL_MS=300000`).
-  **⚠️ VERIFY AT NEXT SESSION START:** re-run the Instantly auth ping — expect
-  **200** (was **402 Payment Required** before the plan). Owner said "assume it
-  works" for these docs; confirm the ping before trusting the send path.
+  **VERIFIED LIVE 2026-06-17:** auth ping **200** (was 402 pre-plan); `GET /campaigns`
+  lists the live "Websites" campaign matching `INSTANTLY_CAMPAIGN_ID`; `emails:read`
+  (poller) returns 200. `leads:create`/`leads:update` write scopes get exercised on
+  the first real `pushLead` at staging.
 - **Stripe webhook:** `STRIPE_WEBHOOK_SECRET` left blank (intentional). **Stripe CLI
   installed** (winget `Stripe.StripeCli`); for local/staging payment testing use the
   `stripe listen` signing secret. A real Dashboard endpoint secret is a go-live item.
@@ -54,12 +55,13 @@ dry-run; **no staging rehearsal done yet.**
 - **Verified this session:** `npm run typecheck` clean, **192/192 tests**,
   `npm run demo` end-to-end, worker boots clean and reads `.env`. Docs committed +
   pushed (`f9631d1`, `william-business-head`).
-- **NEXT (new chat):** (1) re-run the Instantly ping → expect 200; (2) **staging
-  rehearsal** — set `WILLIAM_ENV=staging`, grant the matching gate approvals in the
-  dashboard, run READ/generation paths first (Firecrawl scrape + Anthropic build
-  prompt), confirm the live Firecrawl extraction + `/emails` poller shape; (3)
-  **re-run `compliance-reviewer`** on the live text→prompt behavior (mandatory
-  before the first live send); then enable gated sends. See CLAUDE.md "NEXT STEPS".
+- **NEXT (new chat):** (1) **staging rehearsal** — set `WILLIAM_ENV=staging`, grant
+  the matching gate approvals in the dashboard, run READ/generation paths first
+  (Firecrawl scrape + Anthropic build prompt), confirm the live Firecrawl extraction
+  + `/emails` poller shape; (2) **re-run `compliance-reviewer`** on the live
+  text→prompt behavior (mandatory before the first live send); then enable gated
+  sends (first real `pushLead` also confirms the Instantly write scopes). See
+  CLAUDE.md "NEXT STEPS".
 
 ## Current state
 
