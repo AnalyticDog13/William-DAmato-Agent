@@ -409,48 +409,75 @@ downstream pipeline, zero extra cost.
   (activation-time re-review of the live `/emails` shape; optional backoff on
   repeated poll failures). No new policy gate.
 
-### NEXT STEPS (where to start next — all credential-gated, mock-first today)
+### Done (Activation — credentials live + validated, 192 tests green)
 
-Everything below is built mock-first and simulates until a key arrives; none of
-it blocks. The owner is populating `.env` now, so the near-term work is
-**activation**, not construction. Rough priority:
+**Activation session (2026-06-17).** Owner populated `.env` with real keys; each
+was validated with a live read-only auth ping (no sends, no pipeline run). Tooling
+installed: **Stripe CLI** (winget `Stripe.StripeCli`) + **Playwright Chromium**. A
+**"⚠️ Before going LIVE" checklist** was added above the Status section. Still
+`WILLIAM_ENV=local` → everything dry-run; **no staging rehearsal done yet.**
 
-1. **ACTIVATE the adapters (keys landing).** All adapters are finalized and wired
-   (`createIntegrations` selects real on key presence; `.env` now auto-loads at the
-   worker/api/seed entry points via `loadDotEnv`). The gate between mock and real
-   is config:
-   - **⚠️ `WILLIAM_ENV=staging` is load-bearing.** With `WILLIAM_ENV=local`
-     (the `.env.example` default) `loadConfig` forces `dryRun=true` and every
-     adapter simulates — keys are read but NO real call happens. Set it to
-     `staging` (+ grant the matching gate approval) to exercise real paths. local
-     stays dry-run forever by design (invariant 3).
-   - Keys by leverage: `ANTHROPIC_API_KEY` (build prompts / outreach / reply
-     classification / transcript extraction) → `FIRECRAWL_API_KEY` (scrape →
-     richer briefs) → the rest below.
-   - Then **re-run `compliance-reviewer` on the live text→prompt behavior** and
-     confirm the real Firecrawl `about`/contact extraction against actual pages.
-   - **Inbound replies:** Instantly gates webhooks behind the $97/mo Hypergrowth
-     tier. The **reply poller** (above) is the free alternative — set
-     `INSTANTLY_POLL_INTERVAL_MS` (+ `emails:read` scope on the API key) to ingest
-     replies via the `/emails` API instead. Webhooks (`/webhooks/instantly`) still
-     work if you ever buy the tier; the poller dedupes against them. At staging,
-     re-review the live `/emails` response shape (the `TODO(activation)`).
-2. **Real repo/git-source Vercel deploy for `site.ship`** — today it dry-runs the
-   repo URL through `vercel.deploy(sourcePath=repoUrl)`. Real shipping needs a
-   Vercel token + git-source wiring (OwnerRequest exists). Verify Vercel
+- **Validated live (authenticate):** `ANTHROPIC_API_KEY`, `FIRECRAWL_API_KEY`,
+  `VERCEL_TOKEN`, `STRIPE_SECRET_KEY` (TEST key), `GOOGLE_MAPS_API_KEY` (Places API
+  **v1** — legacy Places is off; use v1), `GMAIL_*` (`gmail.send` scope only; the
+  adapter is send-only, Instantly is the primary channel).
+- **Gmail:** initial refresh token failed (`invalid_grant`, minted against the
+  wrong client); regenerated via OAuth Playground bound to the `.env` client → now
+  valid. Account is Google **Workspace**, so the OAuth app was switched to **User
+  Type = Internal** → the refresh token **no longer expires** (Testing-mode 7-day
+  expiry was the original cause).
+- **Instantly:** **Growth plan purchased** (~$47/mo monthly). Growth includes
+  **API V2** — both `pushLead` (send) and `/emails` (poll); only *webhooks* are
+  Hypergrowth-gated, and the poller already replaces those. A new **API V2 key** is
+  in `INSTANTLY_API_KEY`, **`INSTANTLY_CAMPAIGN_ID` added**, and the `will@…`
+  mailbox (warmed ~3 wk) activated in the campaign. Send cap 5,000/mo (≫ the
+  ~600–1,500/mo a single mailbox at 20–50/day uses). **⚠️ VERIFY AT NEXT SESSION
+  START:** re-run the Instantly auth ping — it should now return **200** (was
+  **402 Payment Required** pre-plan). Owner said "assume it works"; confirm before
+  relying on the send path.
+- **Stripe webhook:** `STRIPE_WEBHOOK_SECRET` intentionally blank. For local/staging
+  payment testing use the `stripe listen` signing secret; a real Dashboard endpoint
+  secret is a go-live item.
+- **Intentionally blank (none needed yet):** `GITHUB_TOKEN` (self-builder only —
+  off), `VERCEL_TEAM_ID` (personal Hobby account — no team), `INSTANTLY_WEBHOOK_SECRET`
+  (poller used), `ENRICHMENT_API_KEY`/`EMAIL_VERIFY_API_KEY` (only widen the funnel
+  for leads without a published email).
+- **Verified:** `npm run typecheck` clean, **192/192 tests**, `npm run demo`
+  end-to-end, worker boots clean and reads `.env` (poller enabled at 300000 ms).
+  Docs committed + pushed (`f9631d1` on `william-business-head`).
+
+### NEXT STEPS (activation is largely done — staging rehearsal is next)
+
+Keys are in `.env` and validated (see "Done (Activation)" above). The remaining
+work is exercising the REAL paths and finishing the last two integrations:
+
+1. **Verify Instantly, then STAGING REHEARSAL.** First re-run the Instantly auth
+   ping (expect **200** now that Growth is bought; was 402). Then the load-bearing
+   switch: **`WILLIAM_ENV=staging`** (local forces dry-run forever — invariant 3).
+   Grant the matching **policy-gate approvals** in the dashboard (a key alone does
+   nothing). Rehearse the SAFE paths FIRST — Firecrawl scrape + Anthropic
+   build-prompt/reply-classification (reads/generation, no outbound, no payment) —
+   confirming the real Firecrawl `about`/contact extraction against actual pages and
+   the live `/emails` poller shape (`TODO(activation)` in `instantly.ts`). Only then
+   enable the gated side-effects (Instantly sends, Stripe, prod deploys).
+2. **Re-run `compliance-reviewer` on the live text→prompt behavior** once the real
+   Anthropic/Firecrawl paths execute (the standing activation-time re-review across
+   the LLM/scrape work). **MANDATORY before the first live send.**
+3. **Real repo/git-source Vercel deploy for `site.ship`** — today it dry-runs the
+   repo URL through `vercel.deploy(sourcePath=repoUrl)`. Real shipping needs the
+   Vercel token (have it) + git-source wiring (OwnerRequest exists). Verify Vercel
    `framework:"vite"` + Instantly `pauseLead` against real APIs at the same time.
-3. **Stripe test mode** (`STRIPE_SECRET_KEY` test key) — validate the full
-   payment-link/invoice + webhook flow end to end.
-4. **Remaining LLM-backed features** behind the adapter: reply classification
-   (`classify.ts`) and transcript insight extraction (`handleTranscriptIngest`)
-   are **DONE** (see the section above) — only **free-text revision
-   interpretation** is left, and it's dormant while the self-builder is off
-   (`WILLIAM_BUILDS_WEBSITES=false`); do it when re-enabling the builder.
-   Quoted-material-to-label, **compliance review required**.
-5. **Real lead sourcing** (Google Places) when `GOOGLE_MAPS_API_KEY` arrives
-   (also `ACTIVATE_NEW_LEAD_SOURCE`-gated).
-6. **Staging rehearsal**: `WILLIAM_ENV=staging` + sandbox creds + granted
-   approvals to watch one real (sandbox) lead flow through end to end.
+4. **Stripe full flow** — validate payment-link/invoice + the webhook (via the
+   `stripe listen` secret) end to end in test mode; set a real endpoint secret for
+   production.
+5. **Optional / later:** enrichment + email-verify providers
+   (`ENRICHMENT_API_KEY`/`EMAIL_VERIFY_API_KEY`) to unblock leads without a published
+   email; **free-text revision interpretation** (dormant while the self-builder is
+   off, `WILLIAM_BUILDS_WEBSITES=false`; **compliance review required** when added).
+6. **Production**: only after a real lead flows end-to-end at staging — work the
+   **"⚠️ Before going LIVE" checklist** (above the Status section): test→live key
+   swaps (esp. Stripe `sk_live_`), strong `OWNER_API_TOKEN`, gate approvals,
+   `npm test` green + DNC lists loaded.
 
 Optional cosmetic: outreach advisory A1 (dedupe a fuzzy near-duplicate opt-out
 line before appending in `applyOpusCopy`) — can't occur locally; low priority.

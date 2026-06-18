@@ -8,8 +8,10 @@
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
 **Last updated:** 2026-06-17 — ACTIVATION session (see "Activation status" below:
-keys added to `.env` + validated live; Gmail re-auth'd; Instantly plan-gated).
-Prior build session (2026-06-16) built
+all keys in `.env` + validated live; Gmail re-auth'd + app set to Internal;
+Instantly Growth plan bought + new API V2 key). **Next session: verify the
+Instantly ping (402→200), then run the staging rehearsal.** Prior build session
+(2026-06-16) built
 (all committed + pushed to `william-business-head`, history scrubbed of the
 owner's personal email): LLM reply classification, LLM transcript extraction,
 Firecrawl `mergeScrape`, `.env` auto-loading, and the build-prompt quality bar
@@ -17,38 +19,47 @@ Firecrawl `mergeScrape`, `.env` auto-loading, and the build-prompt quality bar
 DevTools QA). **Owner is filling in `.env` now → next session is ACTIVATION**
 (see step 1 below; `WILLIAM_ENV=staging` is the load-bearing switch).
 
-## Activation status — 2026-06-17 (keys landing)
+## Activation status — 2026-06-17
 
-Owner populated `.env` and keys were validated with live auth pings (read-only
-endpoints; no sends, no pipeline). Still `WILLIAM_ENV=local` → everything is
-dry-run; no staging rehearsal yet.
+Owner populated `.env` with real keys; each was validated with a live read-only
+auth ping (no sends, no pipeline run). Still `WILLIAM_ENV=local` → everything is
+dry-run; **no staging rehearsal done yet.**
 
-- **Validated (authenticate live):** Anthropic, Firecrawl, Vercel, Stripe (TEST
+- **Validated live (authenticate):** Anthropic, Firecrawl, Vercel, Stripe (TEST
   key), Google Places **v1** (legacy Places API is off — use v1), Gmail
   (`gmail.send` scope only; adapter is send-only, Instantly is primary).
-- **Instantly:** API key is valid but **plan-gated (HTTP 402)** — owner is NOT
-  buying the sending plan yet. Reply **poller is wired** (`INSTANTLY_POLL_INTERVAL_MS`
-  `=300000`, confirmed enabled at worker boot). Two things still gate the real
-  SEND path: (1) buy a sending plan + activate the `will@…` mailbox (warmed ~3wk
-  but shows "not active" — likely the plan), (2) **`INSTANTLY_CAMPAIGN_ID` is NOT
-  in `.env`** (needed by `pushLead`). Inbound polling/replies don't need either.
-- **Gmail:** initial refresh token was `invalid_grant` (wrong-client mismatch);
-  regenerated via OAuth Playground with the `.env` client → now valid. Account is
-  Google **Workspace**, so the OAuth app is being switched to **User Type =
-  Internal** to stop the 7-day Testing-mode refresh-token expiry.
-- **Stripe webhook:** `STRIPE_WEBHOOK_SECRET` left blank. **Stripe CLI installed**
-  (winget `Stripe.StripeCli`); for local webhook testing use the `stripe listen`
-  signing secret. Real prod endpoint secret is a go-live item.
-- **Tooling:** Stripe CLI + Playwright Chromium present. **Pre-launch checklist
-  added to `CLAUDE.md`** ("⚠️ Before going LIVE") — test→live key swaps, blank
-  webhook secret, poll-interval, `OWNER_API_TOKEN` strength, gate approvals,
-  compliance re-review.
+- **Gmail — DONE:** initial refresh token was `invalid_grant` (minted against the
+  wrong client); regenerated via OAuth Playground bound to the `.env` client → now
+  valid. Account is Google **Workspace**, so the OAuth app was set to **User Type =
+  Internal** → refresh token **no longer expires** (the Testing-mode 7-day expiry
+  was the original cause). Re-pinged after the switch: still valid.
+- **Instantly — Growth plan PURCHASED** (~$47/mo monthly; owner buying now). Growth
+  includes **API V2** for both `pushLead` (send) + `/emails` (poll); only *webhooks*
+  are Hypergrowth-gated, and the poller already replaces those. New **API V2 key**
+  in `INSTANTLY_API_KEY`, **`INSTANTLY_CAMPAIGN_ID` added**, `will@…` mailbox
+  (warmed ~3 wk) activated in the campaign. Send cap 5,000/mo (≫ usage). Poller
+  wired + confirmed at worker boot (`INSTANTLY_POLL_INTERVAL_MS=300000`).
+  **⚠️ VERIFY AT NEXT SESSION START:** re-run the Instantly auth ping — expect
+  **200** (was **402 Payment Required** before the plan). Owner said "assume it
+  works" for these docs; confirm the ping before trusting the send path.
+- **Stripe webhook:** `STRIPE_WEBHOOK_SECRET` left blank (intentional). **Stripe CLI
+  installed** (winget `Stripe.StripeCli`); for local/staging payment testing use the
+  `stripe listen` signing secret. A real Dashboard endpoint secret is a go-live item.
+- **Intentionally blank (none needed yet):** `GITHUB_TOKEN` (self-builder only —
+  off), `VERCEL_TEAM_ID` (personal Hobby account), `INSTANTLY_WEBHOOK_SECRET`
+  (poller used), `ENRICHMENT_API_KEY`/`EMAIL_VERIFY_API_KEY` (only widen the funnel).
+- **Tooling + docs:** Stripe CLI + Playwright Chromium present. **"⚠️ Before going
+  LIVE" checklist added to `CLAUDE.md`** (test→live key swaps, blank webhook secret,
+  poll-interval, `OWNER_API_TOKEN` strength, gate approvals, compliance re-review).
 - **Verified this session:** `npm run typecheck` clean, **192/192 tests**,
-  `npm run demo` end-to-end, worker boots clean and reads `.env`.
-- **Next:** add `INSTANTLY_CAMPAIGN_ID` when the plan is bought; then a staging
-  rehearsal (`WILLIAM_ENV=staging`) starting with READ/generation paths (Firecrawl
-  scrape + Anthropic build prompt), then re-run `compliance-reviewer` on the live
-  text→prompt behavior before enabling gated sends.
+  `npm run demo` end-to-end, worker boots clean and reads `.env`. Docs committed +
+  pushed (`f9631d1`, `william-business-head`).
+- **NEXT (new chat):** (1) re-run the Instantly ping → expect 200; (2) **staging
+  rehearsal** — set `WILLIAM_ENV=staging`, grant the matching gate approvals in the
+  dashboard, run READ/generation paths first (Firecrawl scrape + Anthropic build
+  prompt), confirm the live Firecrawl extraction + `/emails` poller shape; (3)
+  **re-run `compliance-reviewer`** on the live text→prompt behavior (mandatory
+  before the first live send); then enable gated sends. See CLAUDE.md "NEXT STEPS".
 
 ## Current state
 
