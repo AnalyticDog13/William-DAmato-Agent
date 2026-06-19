@@ -300,6 +300,22 @@ describe("llm real adapter — scoreVisualDesign", () => {
     const out = await llm.scoreVisualDesign(liveTicket, { companyName: "x", niche: "y", weaknesses: [], images: [{ mediaType: "image/png", dataBase64: "AAA" }] });
     expect(out).toBeNull();
   });
+
+  it("generateOutreachCopy: user message includes visual findings", async () => {
+    let sentBody = "";
+    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+      sentBody = typeof init?.body === "string" ? init.body : "";
+      return new Response(JSON.stringify({ content: [{ type: "text", text: "Subject: hi\n---\nbody\n" }] }), { status: 200 });
+    }) as typeof fetch;
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-test" }, fetchImpl }, log);
+    await llm.generateOutreachCopy(liveTicket, {
+      kind: "first_touch", variant: "v1-cornell-mockup", companyName: "Joe's", niche: "barbershop",
+      firstName: null, websiteUrl: "https://x.com", hasWebsite: true,
+      auditFindings: ["slow site"], visualFindings: ["no clear CTA above the fold"], lighthouseSummary: "perf 40, a11y 60",
+    });
+    expect(sentBody).toContain("no clear CTA above the fold");
+    expect(sentBody).toContain("perf 40, a11y 60");
+  });
 });
 
 describe("registry credential selection", () => {

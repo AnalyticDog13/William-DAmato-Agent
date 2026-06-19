@@ -20,6 +20,7 @@ import {
   type SiteProject,
   type SourceProvenance,
   type VisualAssessment,
+  type WebsiteAudit,
   type WebsiteBrief,
 } from "@william/core";
 import type { CompanyScrapeHints, ExecutionResult, OutreachCopyRequest } from "@william/integrations";
@@ -357,6 +358,17 @@ const handleContact: JobHandler = async (ctx, job) => {
   ctx.store.queue.enqueue({ type: "lead.score", payload: { leadId: lead.id, auditId: job.payload.auditId }, traceId: job.traceId, leadId: lead.id });
 };
 
+/** Visual-assessment findings (short strings) for the model to reference truthfully. */
+function visualFindingStrings(audit: WebsiteAudit): string[] {
+  return (audit.visualAssessment?.findings ?? []).map((f) => f.detail);
+}
+
+/** One-line Lighthouse perf/a11y/seo summary, or null when no scores exist. */
+function lighthouseSummary(audit: WebsiteAudit): string | null {
+  const l = audit.lighthouse;
+  return l ? `perf ${l.performance ?? "n/a"}, a11y ${l.accessibility ?? "n/a"}, seo ${l.seo ?? "n/a"}` : null;
+}
+
 /**
  * Optionally replace a template draft's copy with Opus-personalized copy.
  * The LLM adapter returns null with no key / in dry-run (local) — so the
@@ -424,6 +436,8 @@ const handleDraft: JobHandler = async (ctx, job) => {
       websiteUrl: lead.websiteUrl,
       hasWebsite: audit.hasWebsite,
       auditFindings: audit.outreachAngles.slice(0, 3),
+      visualFindings: visualFindingStrings(audit),
+      lighthouseSummary: lighthouseSummary(audit),
     },
     job.traceId,
   );
@@ -636,6 +650,8 @@ const handleFollowUp: JobHandler = async (ctx, job) => {
       websiteUrl: lead.websiteUrl,
       hasWebsite: audit.hasWebsite,
       auditFindings: audit.outreachAngles.slice(0, 3),
+      visualFindings: visualFindingStrings(audit),
+      lighthouseSummary: lighthouseSummary(audit),
       sequence,
     },
     job.traceId,

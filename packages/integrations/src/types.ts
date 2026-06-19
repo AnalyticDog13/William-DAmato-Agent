@@ -184,6 +184,10 @@ export interface OutreachCopyRequest {
   websiteUrl: string | null;
   hasWebsite: boolean;
   auditFindings: string[];
+  /** Visual-assessment findings (short strings) to reference truthfully. */
+  visualFindings?: string[];
+  /** One-line Lighthouse summary, or null. */
+  lighthouseSummary?: string | null;
   sequence?: number;
 }
 
