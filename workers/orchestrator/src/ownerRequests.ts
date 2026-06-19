@@ -61,11 +61,16 @@ export function ensureBootstrapOwnerRequests(ctx: AppContext): void {
   }
   if (missing.has("anthropic")) {
     ctx.memory.requestFromOwner({
-      title: "Provide Anthropic API key (Opus 4.8) for build prompts + outreach",
-      whyItMatters: "Build-prompt generation and Opus-personalized outreach run on deterministic templates until an Anthropic key exists. The key upgrades them to real Opus output; scraped/audit text stays quoted material (invariant 1).",
-      neededFields: ["ANTHROPIC_API_KEY", "ANTHROPIC_MODEL (optional; defaults to claude-opus-4-8)"],
+      title: "Provide Anthropic API key (per-task models: Haiku for visual/outreach/classify, Sonnet 4.6 for build prompts)",
+      whyItMatters: "Build-prompt generation, outreach personalization, reply classification, transcript extraction, and visual scoring run on deterministic templates/heuristics until an Anthropic key exists. The key upgrades them to real model output; scraped/audit text stays quoted material (invariant 1).",
+      neededFields: [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_MODEL (optional; global default Haiku — claude-haiku-4-5-20251001 — drives reply classification + transcripts)",
+        "ANTHROPIC_BUILD_MODEL (optional; defaults to Sonnet 4.6 — claude-sonnet-4-6 — for build prompts)",
+        "ANTHROPIC_OUTREACH_MODEL / ANTHROPIC_VISUAL_MODEL (optional; default to Haiku)",
+      ],
       credentialKind: "live",
-      unblocks: ["real Opus website build prompts", "Opus-personalized outreach copy"],
+      unblocks: ["real website build prompts (Sonnet 4.6)", "personalized outreach copy + reply classification + visual scoring (Haiku)"],
       category: "credentials",
     });
   }

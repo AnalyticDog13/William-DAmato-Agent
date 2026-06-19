@@ -39,7 +39,7 @@ export function createLlmAdapter(deps: RealDeps, log: Logger): LlmAdapter {
   const outreachModel = deps.env.ANTHROPIC_OUTREACH_MODEL ?? globalModel;
   const visualModel = deps.env.ANTHROPIC_VISUAL_MODEL ?? globalModel;
   return {
-    name: "anthropic-opus",
+    name: "anthropic",
     async generateBuildPrompt(ticket, input) {
       requireTicket(ticket, "llm.generateBuildPrompt");
       if (ticket.dryRun) return templateBuildPrompt(input);

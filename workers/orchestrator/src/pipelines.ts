@@ -26,7 +26,7 @@ import {
 import type { CompanyScrapeHints, ExecutionResult, OutreachCopyRequest } from "@william/integrations";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { auditWebsite, crawlForEmail, qualityCheckPreview } from "@william/worker-site-auditor";
+import { auditWebsite, crawlForEmail, launchChromium, qualityCheckPreview } from "@william/worker-site-auditor";
 import {
   DELIVERY_VARIANT,
   MAX_TOUCHES,
@@ -278,7 +278,7 @@ const handleContact: JobHandler = async (ctx, job) => {
       const crawl = await crawlForEmail(lead, {
         log: ctx.log,
         ticket: crawlTicket,
-        launchBrowser: ctx.browserLauncher ?? (await import("@william/worker-site-auditor")).launchChromium,
+        launchBrowser: ctx.browserLauncher ?? launchChromium,
         subpaths: ctx.config.emailDiscovery.subpaths,
         maxPages: ctx.config.emailDiscovery.maxPages,
       });
