@@ -42,6 +42,10 @@ export interface RuntimeConfig {
    * (default). Inert in local (dry-run forces pollInbound to return []).
    */
   instantlyPollIntervalMs: number;
+  /** Visual-scoring blend weight (0=ignore visual,1=visual only) + override confidence floors. */
+  visualScoring: { weight: number; promoteMinConfidence: number; demoteMinConfidence: number };
+  /** Staged email discovery: subpaths the Playwright fallback crawls, capped by maxPages. */
+  emailDiscovery: { subpaths: string[]; maxPages: number };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -57,6 +61,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     const n = Number(raw);
     return Number.isFinite(n) && n >= 0 && n <= 100 ? n : fallback;
   };
+  const unit = (raw: string | undefined, fallback: number): number => {
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 && n <= 1 ? n : fallback;
+  };
+  const DEFAULT_SUBPATHS = [
+    "/contact", "/contact-us", "/about", "/about-us", "/team",
+    "/location", "/locations", "/book", "/booking", "/menu", "/get-in-touch",
+  ];
+  const subpaths = (env.EMAIL_DISCOVERY_SUBPATHS ?? "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  const maxPagesRaw = Number(env.EMAIL_DISCOVERY_MAX_PAGES);
   return {
     env: williamEnv,
     dryRun,
@@ -76,5 +91,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
       const n = Number(env.INSTANTLY_POLL_INTERVAL_MS);
       return Number.isFinite(n) && n > 0 ? n : 0;
     })(),
+    visualScoring: {
+      weight: unit(env.VISUAL_SCORING_WEIGHT, 0.5),
+      promoteMinConfidence: unit(env.VISUAL_PROMOTE_MIN_CONFIDENCE, 0.7),
+      demoteMinConfidence: unit(env.VISUAL_DEMOTE_MIN_CONFIDENCE, 0.7),
+    },
+    emailDiscovery: {
+      subpaths: subpaths.length > 0 ? subpaths : DEFAULT_SUBPATHS,
+      maxPages: Number.isFinite(maxPagesRaw) && maxPagesRaw > 0 ? Math.floor(maxPagesRaw) : 8,
+    },
   };
 }

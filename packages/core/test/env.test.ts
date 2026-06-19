@@ -44,6 +44,25 @@ describe("loadConfig flags", () => {
     expect(loadConfig({ WILLIAM_ENV: "local", INSTANTLY_POLL_INTERVAL_MS: "-5" }).instantlyPollIntervalMs).toBe(0);
     expect(loadConfig({ WILLIAM_ENV: "local", INSTANTLY_POLL_INTERVAL_MS: "nope" }).instantlyPollIntervalMs).toBe(0);
   });
+
+  it("defaults visualScoring and emailDiscovery", () => {
+    const cfg = loadConfig({ WILLIAM_ENV: "local" } as NodeJS.ProcessEnv);
+    expect(cfg.visualScoring).toEqual({ weight: 0.5, promoteMinConfidence: 0.7, demoteMinConfidence: 0.7 });
+    expect(cfg.emailDiscovery.maxPages).toBe(8);
+    expect(cfg.emailDiscovery.subpaths).toContain("/contact");
+  });
+
+  it("parses + clamps visualScoring and parses subpaths", () => {
+    const cfg = loadConfig({
+      WILLIAM_ENV: "staging", DRY_RUN: "true",
+      VISUAL_SCORING_WEIGHT: "0.3", VISUAL_PROMOTE_MIN_CONFIDENCE: "9", // out of range → default
+      EMAIL_DISCOVERY_SUBPATHS: "/a, /b ,/c", EMAIL_DISCOVERY_MAX_PAGES: "3",
+    } as NodeJS.ProcessEnv);
+    expect(cfg.visualScoring.weight).toBe(0.3);
+    expect(cfg.visualScoring.promoteMinConfidence).toBe(0.7); // clamped back to default
+    expect(cfg.emailDiscovery.subpaths).toEqual(["/a", "/b", "/c"]);
+    expect(cfg.emailDiscovery.maxPages).toBe(3);
+  });
 });
 
 describe("loadDotEnv", () => {
