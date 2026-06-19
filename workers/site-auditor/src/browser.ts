@@ -7,7 +7,7 @@ import type { Logger } from "@william/core";
  */
 export interface MinimalPage {
   url(): string;
-  goto(url: string, opts?: { waitUntil?: "load"; timeout?: number }): Promise<unknown>;
+  goto(url: string, opts?: { waitUntil?: "load" | "domcontentloaded" | "networkidle"; timeout?: number }): Promise<unknown>;
   title(): Promise<string>;
   content(): Promise<string>;
   setViewportSize(size: { width: number; height: number }): Promise<void>;
