@@ -1,4 +1,4 @@
-import type { WebsiteAudit, WebsiteWeakness } from "@william/core";
+import { extractEmails, type WebsiteAudit, type WebsiteWeakness } from "@william/core";
 
 export interface PageSignals {
   html: string;
@@ -35,9 +35,7 @@ const TRUST_PATTERNS = /\b(testimonial|review|google reviews|5-star|five star|aw
 /** Extracts structured signals from raw page HTML — regex heuristics, no DOM. */
 export function extractSignals(page: PageSignals): ExtractedSignals {
   const html = page.html;
-  const emails = [...new Set((html.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) ?? [])
-    .map((e) => e.toLowerCase())
-    .filter((e) => !/\.(png|jpg|jpeg|gif|webp|svg|css|js)$/.test(e) && !e.includes("example.")))];
+  const emails = extractEmails(html);
   const phones = [...new Set(html.match(/(\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/g) ?? [])].slice(0, 3);
   const socialLinks: Record<string, string> = {};
   for (const [name, re] of Object.entries(SOCIAL_HOSTS)) {
