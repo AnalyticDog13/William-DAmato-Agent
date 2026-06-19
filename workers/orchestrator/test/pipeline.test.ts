@@ -406,25 +406,20 @@ describe("pipeline reorder + email-ladder gate (task 8)", () => {
   });
 
   it("no-email lead is disqualified with the record kept and never reaches scoring", async () => {
-    // Seed a lead whose audit extracted NO emails; run lead.contact directly.
-    ingestLead(ctx, lead("No Email Barbers", "https://no-email-barbers.example.com"));
-    await runUntilEmpty(ctx, 100, futureClock); // runs audit; stops at contact (contact enqueued by audit)
+    // A website-less lead has NO email at every ladder rung: the mock audit
+    // extracts no contactEmails (step 1), the crawl is skipped (null websiteUrl,
+    // step 2), and enrichment is skipped (null domain, step 3) — so the ladder
+    // deterministically exhausts and the email gate must fire.
+    ingestLead(ctx, lead("No Email Barbers", null));
+    await runUntilEmpty(ctx, 100, futureClock); // intake → audit → contact (hits the gate)
     const l = ctx.store.leads.list()[0]!;
-    // At this point lead.contact is enqueued (or ran). Check final state.
-    // The mock audit never extracts emails from the test domain, so the ladder
-    // should exhaust and disqualify. The lead record must still exist.
+
     const lead_ = ctx.store.leads.get(l.id)!;
-    // If contact was available (owner_provided or enrichment returned one), the
-    // lead proceeds — so we only assert the disqualified path when no contact email found.
-    if (lead_.status === "disqualified") {
-      expect(lead_.disqualifiedReason).toMatch(/no contactable email/i);
-      expect(ctx.store.leads.get(l.id)).toBeDefined(); // record kept
-      // No lead.score job should have been enqueued for this lead.
-      expect(ctx.store.queue.list().some((j) => j.type === "lead.score" && j.leadId === l.id)).toBe(false);
-    } else {
-      // If the mock returned a contact, the reorder is still verifiable via the audit test above.
-      expect(["contact_ready", "scored", "draft_ready"]).toContain(lead_.status);
-    }
+    expect(lead_.status).toBe("disqualified");
+    expect(lead_.disqualifiedReason).toMatch(/no contactable email/i);
+    expect(ctx.store.leads.get(l.id)).toBeDefined(); // record kept
+    // The lead never reaches scoring — no lead.score job was ever enqueued.
+    expect(ctx.store.queue.list().some((j) => j.type === "lead.score" && j.leadId === l.id)).toBe(false);
   });
 
   it("contactable lead: contact runs before score, score finds the contact and enqueues outreach.draft", async () => {
