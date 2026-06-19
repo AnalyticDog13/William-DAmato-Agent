@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { newId, newTraceId, nowIso } from "@william/core";
 import {
   createContext,
@@ -927,6 +927,13 @@ describe("visual scoring in handleScore (task 9)", () => {
     "base64",
   );
 
+  // Temp dirs created by individual tests; removed after each so we never leak
+  // PNGs into the OS temp dir (review: retrofit cleanup for the visual-fires dir).
+  const tempDirs: string[] = [];
+  afterEach(() => {
+    for (const d of tempDirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
   // Get a real lead + audit through the normal pipeline (mock audit, http/mock mode
   // → screenshot paths are null), then drive lead.score directly so the test owns
   // the screenshot paths and the stub.
@@ -960,10 +967,23 @@ describe("visual scoring in handleScore (task 9)", () => {
   }
 
   it("scores with the visual assessment when screenshots exist and persists it", async () => {
-    const { lead: l, audit } = await leadAndAudit("Visual Barbers");
+    // "Cold Visual Barbers" is a domain whose deterministic mock audit scores in
+    // the COLD band (no SSL/mobile issues, mediocre Lighthouse) — i.e. the
+    // pre-visual tier is NOT warm/hot. That makes the assertion below
+    // unambiguous: only the visual layer can promote it.
+    const { lead: l, audit } = await leadAndAudit("Cold Visual Barbers");
+
+    // The pipeline already ran lead.score ONCE deterministically (no screenshots
+    // → no visual). Capture that pre-visual score and prove it is below warm: if
+    // it were already warm/hot the warm/hot assertion later would be vacuous.
+    const preVisualScores = ctx.store.leadScores.list({ leadId: l.id });
+    expect(preVisualScores.length).toBe(1);
+    const preVisual = preVisualScores[0]!;
+    expect(preVisual.tier).toBe("cold"); // deterministic-only verdict, pre-visual
 
     // Write a real PNG and point the audit's first page at it (desktop + mobile).
     const dir = mkdtempSync(join(tmpdir(), "william-visual-"));
+    tempDirs.push(dir);
     const shot = join(dir, "desktop.png");
     const mobileShot = join(dir, "mobile.png");
     writeFileSync(shot, TINY_PNG);
@@ -977,9 +997,12 @@ describe("visual scoring in handleScore (task 9)", () => {
     let receivedImages = 0;
     ctx.integrations.llm.scoreVisualDesign = async (_ticket, input) => {
       receivedImages = input.images.length;
+      // A confident "weak" verdict — the visual layer's job is to surface a
+      // strong opportunity the deterministic audit missed.
       return { visualOpportunityScore: 88, verdict: "weak", confidence: 0.9, findings: [], positives: [], model: "stub" };
     };
 
+    // Re-run lead.score EXPLICITLY now that screenshots + the stub are in place.
     await runScore(l.id, audit.id);
 
     // Both screenshots were read + base64-encoded and handed to the vision model.
@@ -988,9 +1011,16 @@ describe("visual scoring in handleScore (task 9)", () => {
     expect(saved.visualAssessment?.verdict).toBe("weak");
     expect(ctx.store.activity.list({ leadId: l.id }).some((a) => a.kind === "visual_scored")).toBe(true);
 
-    // The score reflects the visual layer (weak verdict promotes into warm/hot).
-    const score = ctx.store.leadScores.list({ leadId: l.id })[0]!;
-    expect(score.tier === "warm" || score.tier === "hot").toBe(true);
+    // A NEW score was appended by the explicit (visual) run...
+    const afterScores = ctx.store.leadScores.list({ leadId: l.id });
+    expect(afterScores.length).toBe(preVisualScores.length + 1);
+    // ...and THAT score — the one the explicit visual run produced, identified by
+    // its id (not by list order, which can tie when both rows share a timestamp)
+    // — is warm/hot. With visual scoring as a no-op this score would still read
+    // "cold" and FAIL, so the tier change is attributable to the visual verdict.
+    const visualScore = afterScores.find((s) => s.id !== preVisual.id)!;
+    expect(visualScore).toBeDefined();
+    expect(visualScore.tier === "warm" || visualScore.tier === "hot").toBe(true);
   });
 
   it("scores deterministically when there are no screenshots — the adapter is never called", async () => {
@@ -1011,5 +1041,39 @@ describe("visual scoring in handleScore (task 9)", () => {
     expect(ctx.store.activity.list({ leadId: l.id }).some((a) => a.kind === "visual_scored")).toBe(false);
     // A score was still produced (deterministic only).
     expect(ctx.store.leadScores.list({ leadId: l.id }).length).toBeGreaterThan(0);
+  });
+
+  it("degrades to deterministic-only when a screenshot read fails — never throws, never calls the adapter", async () => {
+    const { lead: l, audit } = await leadAndAudit("Broken Shot Barbers");
+
+    // Point the audit's first page at a screenshot path that does NOT exist on
+    // disk. handleScore's readFileSync will throw INSIDE the try block, before
+    // the vision adapter is ever reached.
+    const missing = join(tmpdir(), `william-missing-${newId("png")}.png`);
+    expect(existsSync(missing)).toBe(false); // genuinely absent
+    const page0 = audit.pages[0] ?? { url: audit.url ?? "https://x", title: null, loadMs: null, issues: [] };
+    ctx.store.audits.save({
+      ...audit,
+      pages: [{ ...page0, screenshotPath: missing, mobileScreenshotPath: null }, ...audit.pages.slice(1)],
+    });
+
+    let called = false;
+    ctx.integrations.llm.scoreVisualDesign = async () => {
+      called = true; // must never be reached — readFileSync throws first
+      return { visualOpportunityScore: 88, verdict: "weak", confidence: 0.9, findings: [], positives: [], model: "stub" };
+    };
+
+    const scoresBefore = ctx.store.leadScores.list({ leadId: l.id }).length;
+
+    // The handler resolves WITHOUT throwing (the catch falls back to deterministic).
+    await expect(runScore(l.id, audit.id)).resolves.not.toThrow();
+
+    // The adapter was never reached (the read threw before the call).
+    expect(called).toBe(false);
+    // No visual assessment was persisted (the catch ran instead of the save).
+    expect(ctx.store.audits.get(audit.id)!.visualAssessment).toBeNull();
+    expect(ctx.store.activity.list({ leadId: l.id }).some((a) => a.kind === "visual_scored")).toBe(false);
+    // A LeadScore was still produced by the deterministic path.
+    expect(ctx.store.leadScores.list({ leadId: l.id }).length).toBe(scoresBefore + 1);
   });
 });
