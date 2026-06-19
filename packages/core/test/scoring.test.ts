@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scoreLead, nowIso, type WebsiteAudit } from "../src/index";
+import { scoreLead, nowIso, type WebsiteAudit, type VisualAssessment } from "../src/index";
 
 function audit(overrides: Partial<WebsiteAudit> = {}): WebsiteAudit {
   const now = nowIso();
@@ -77,5 +77,39 @@ describe("scoreLead", () => {
     const r = scoreLead(audit({ hasSsl: false }));
     expect(r.reasons.length).toBeGreaterThan(0);
     for (const reason of r.reasons) expect(reason).toMatch(/^[+-]?\d+: /);
+  });
+
+  it("phone-only is NOT reachable (email-only outreach)", () => {
+    const phoneOnly = scoreLead(audit({ extracted: { contactEmails: [], phones: ["+1-607-555-0100"], socialLinks: {}, ctas: [], services: [], trustSignals: [] } }));
+    const noContact = scoreLead(audit({ extracted: { contactEmails: [], phones: [], socialLinks: {}, ctas: [], services: [], trustSignals: [] } }));
+    expect(phoneOnly.score).toBe(noContact.score); // phone earns no reachability credit
+  });
+
+  it("null visual assessment leaves the score unchanged", () => {
+    const a = audit({});
+    expect(scoreLead(a, null).score).toBe(scoreLead(a).score);
+  });
+
+  it("a confident WEAK verdict promotes a technically-clean site into contact range", () => {
+    const clean = audit({
+      hasSsl: true, mobileFriendly: true,
+      lighthouse: { performance: 95, accessibility: 95, bestPractices: 95, seo: 95 },
+      extracted: { contactEmails: ["owner@x.com"], phones: [], socialLinks: {}, ctas: ["book now"], services: [], trustSignals: ["reviews"] },
+      weaknesses: [],
+    });
+    const visual: VisualAssessment = { visualOpportunityScore: 90, verdict: "weak", confidence: 0.9, findings: [], positives: [], model: "m" };
+    const promoted = scoreLead(clean, visual);
+    expect(promoted.tier === "warm" || promoted.tier === "hot").toBe(true);
+  });
+
+  it("a confident STRONG verdict demotes a technically-weak site to skip", () => {
+    const weakTech = audit({
+      hasSsl: false, mobileFriendly: false,
+      lighthouse: { performance: 20, accessibility: 30, bestPractices: 40, seo: 25 },
+      extracted: { contactEmails: ["owner@x.com"], phones: [], socialLinks: {}, ctas: [], services: [], trustSignals: [] },
+      weaknesses: [{ category: "conversion", detail: "no CTA", severity: "high" }],
+    });
+    const visual: VisualAssessment = { visualOpportunityScore: 5, verdict: "strong", confidence: 0.9, findings: [], positives: ["clear, polished, effective"], model: "m" };
+    expect(scoreLead(weakTech, visual).tier).toBe("skip");
   });
 });
