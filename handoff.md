@@ -7,10 +7,13 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-17 — ACTIVATION session (see "Activation status" below:
-all keys in `.env` + validated live; Gmail re-auth'd + app set to Internal;
-Instantly Growth plan bought + new API V2 key, **verified live 200**). **Next
-session: run the staging rehearsal (`WILLIAM_ENV=staging`).** Prior build session
+**Last updated:** 2026-06-19 — VISUAL SCORING + EMAIL-ONLY GATE feature shipped
+(see "Visual scoring + email-only gate" session below). **Next session: staging
+rehearsal that exercises the real vision + email-crawl paths**, plus the standing
+activation-time compliance re-review when the real Anthropic/Firecrawl/vision
+paths first run. Prior session (2026-06-17) was ACTIVATION (see "Activation status"
+below: all keys in `.env` + validated live; Gmail re-auth'd + app set to Internal;
+Instantly Growth plan bought + new API V2 key, **verified live 200**). Earlier build session
 (2026-06-16) built
 (all committed + pushed to `william-business-head`, history scrubbed of the
 owner's personal email): LLM reply classification, LLM transcript extraction,
@@ -18,6 +21,59 @@ Firecrawl `mergeScrape`, `.env` auto-loading, and the build-prompt quality bar
 (Higgsfield + real backend + loading states + GSAP/Three.js + basic SEO + Chrome
 DevTools QA). **Owner is filling in `.env` now → next session is ACTIVATION**
 (see step 1 below; `WILLIAM_ENV=staging` is the load-bearing switch).
+
+## Visual scoring + email-only gate — 2026-06-19
+
+Shipped on `william-business-head` (mock-first; **~225 tests green**, typecheck
+clean, `npm run demo` end-to-end with **zero keys** — local stays dry-run).
+
+- **Email-only outreach (owner-requested log).** William contacts by email only.
+  A lead with **no real email** (phone-only counts as no-email) → status
+  **`disqualified`** (record **KEPT**), never contacted. Scoring reachability is
+  now **email-only**. Discovery is **staged + cost-ordered** in `handleContact`:
+  (1) cheap homepage regex `firstRealEmail(audit.extracted.contactEmails)` →
+  (2) on a miss, a **Playwright subpage crawl** `crawlForEmail` (headless Chromium,
+  `networkidle`, **innerText + raw HTML** across likely subpaths, placeholder-
+  blocklisted, **robots-respecting**, **dry-run-safe** → no local crawling) →
+  (3) enrichment provider → (4) none → `disqualified` + OwnerRequest. The browser
+  fallback runs **only on a regex miss/placeholder**, never every lead. Shared
+  helpers `isPlaceholderEmail`/`firstRealEmail`/`extractEmails` live in
+  `@william/core` (heuristics reuse `extractEmails`); new `Contact.emailSource`
+  value `"website_crawled"`. **Pipeline reordered** to `audit → contact → score →
+  draft` (gate + visual cost sit after email resolution).
+- **Visual scoring.** `llm.scoreVisualDesign` (a **Haiku vision** call) scores the
+  audit screenshots → new `VisualAssessment` on `WebsiteAudit.visualAssessment`.
+  Runs in `handleScore` **only when screenshots exist** (playwright mode), on an
+  operational ticket, mock-first (null in local/dry-run). `scoreLead(audit, visual,
+  config)` combines bidirectionally — confident `weak` floors to warm (promote),
+  confident `strong` caps to skip (demote).
+- **Per-task Anthropic models.** `ANTHROPIC_MODEL` default flipped **Opus → Haiku**
+  (`claude-haiku-4-5-20251001`; global fallback + reply-classify + transcript).
+  Add `ANTHROPIC_VISUAL_MODEL` (Haiku, visual), `ANTHROPIC_OUTREACH_MODEL` (Haiku,
+  outreach), `ANTHROPIC_BUILD_MODEL` (`claude-sonnet-4-6`, build prompts). **⚠️
+  Caveat:** a stray `ANTHROPIC_MODEL=claude-opus-4-8` left in `.env` from
+  activation OVERRIDES the Haiku default — unset it to run classify/transcripts on
+  Haiku (now also in the CLAUDE.md "Before going LIVE" checklist + `docs/setup.md`).
+- **Outreach + build prompt.** Outreach copy now references the real visual +
+  Lighthouse findings (fenced as untrusted DATA; opt-out/Cornell/mockup/
+  `validateDraft` guarantees unchanged). Build prompts condensed to **≤3 paragraphs**
+  (Sonnet 4.6), still requiring every owner element (Higgsfield, GSAP/Three.js, real
+  backend, loading states, SEO, Chrome DevTools QA), weaving in "Framer, Figma,
+  React, frontend-design", ending with the literal line `do not use superpowers`.
+- **Config:** `RuntimeConfig` gained `visualScoring` (weight/promote/demote
+  confidences) + `emailDiscovery` (subpaths/maxPages); env vars
+  `VISUAL_SCORING_WEIGHT`, `VISUAL_PROMOTE_MIN_CONFIDENCE`,
+  `VISUAL_DEMOTE_MIN_CONFIDENCE`, `EMAIL_DISCOVERY_SUBPATHS`,
+  `EMAIL_DISCOVERY_MAX_PAGES` (`.env.example` + `docs/setup.md` updated).
+- **OWNER DECISION:** robots-disallowed handling stays **OUT of `scoreLead`**
+  (honoring the prior `bea732d "Remove crawl block"` commit); the orphaned robots
+  scoring test was deleted. Robots is still respected **upstream** — the audit
+  aborts + writes a compliance event.
+- **NEXT:** staging rehearsal exercising the **real vision + email-crawl paths**
+  (and confirming the live Firecrawl/`/emails` shapes), then **re-run
+  `compliance-reviewer`** on the live text→prompt behavior (mandatory before the
+  first live send — the standing activation-time re-review now also covers the
+  visual-scoring + email-crawl LLM/vision paths).
 
 ## Activation status — 2026-06-17
 

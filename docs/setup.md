@@ -46,6 +46,41 @@ on restart, and matching OwnerRequests can be marked fulfilled.
 | `ENRICHMENT_API_KEY` / `EMAIL_VERIFY_API_KEY` | contacts for leads without published emails; bounce protection | provider choice is an open OwnerRequest |
 | `HIGGSFIELD_ENABLED=true` | visual generation via Higgsfield MCP | stays dry-run until owner confirms credit budget |
 
+## Anthropic models — per task
+
+William calls Anthropic on a **per-task** basis; each has its own env var with a
+sensible default. Leave them unset to use the defaults.
+
+| Env var | Drives | Default |
+|---|---|---|
+| `ANTHROPIC_MODEL` | global fallback + reply-classification + transcript extraction | `claude-haiku-4-5-20251001` (Haiku) |
+| `ANTHROPIC_VISUAL_MODEL` | visual scoring of audit screenshots | Haiku |
+| `ANTHROPIC_OUTREACH_MODEL` | outreach copy | Haiku |
+| `ANTHROPIC_BUILD_MODEL` | build prompts | `claude-sonnet-4-6` (Sonnet 4.6) |
+
+> **⚠️ Activation caveat:** the global default flipped Opus → Haiku. An explicit
+> `ANTHROPIC_MODEL=claude-opus-4-8` left in `.env` from the activation session
+> **OVERRIDES the Haiku default** and runs reply-classification + transcript
+> extraction on Opus. **Unset it** (or set the Haiku id) to run those on Haiku.
+> The three per-task vars above are unaffected by this.
+
+## Visual scoring + email discovery
+
+| Env var | Controls | Default |
+|---|---|---|
+| `VISUAL_SCORING_WEIGHT` | weight of the Haiku vision verdict in `scoreLead` | see `.env.example` |
+| `VISUAL_PROMOTE_MIN_CONFIDENCE` | min confidence for a `weak` verdict to floor a lead to warm (promote) | see `.env.example` |
+| `VISUAL_DEMOTE_MIN_CONFIDENCE` | min confidence for a `strong` verdict to cap a lead to skip (demote) | see `.env.example` |
+| `EMAIL_DISCOVERY_SUBPATHS` | subpaths the Playwright email crawl visits (`/contact`, `/about`, …) | see `.env.example` |
+| `EMAIL_DISCOVERY_MAX_PAGES` | max pages the email crawl fetches per lead | see `.env.example` |
+
+Outreach is **email-only**: a lead with no real email (phone-only counts as
+no-email) is set to `disqualified` (record kept) and never contacted. Email
+discovery is staged + cost-ordered — cheap homepage regex → Playwright subpage
+crawl (only on a miss; robots-respecting, dry-run-safe) → enrichment → disqualify.
+Visual scoring runs only in `AUDITOR_MODE=playwright` (it scores the audit
+screenshots) and is mock-first (no-op in local/dry-run).
+
 ## Site auditor modes
 
 - `AUDITOR_MODE=mock` (default) — synthesized audits, zero network.

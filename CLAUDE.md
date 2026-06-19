@@ -97,6 +97,13 @@ Work this list top-to-bottom when activating production:
         `VERCEL_TOKEN`/`VERCEL_TEAM_ID`, `INSTANTLY_API_KEY`/`INSTANTLY_CAMPAIGN_ID`,
         `GMAIL_*`, `GITHUB_TOKEN`, `ENRICHMENT_API_KEY`, `EMAIL_VERIFY_API_KEY`
         — confirm each is a real production value, not a placeholder/test key.
+  - [ ] **`ANTHROPIC_MODEL` must NOT pin Opus.** The default is now Haiku
+        (`claude-haiku-4-5-20251001`); a stray `ANTHROPIC_MODEL=claude-opus-4-8`
+        left in `.env` from the activation session **OVERRIDES that default** and
+        runs reply-classify + transcript extraction on Opus. **Unset it** (or set
+        the Haiku id) unless Opus is intended. The per-task models
+        (`ANTHROPIC_VISUAL_MODEL`, `ANTHROPIC_OUTREACH_MODEL`, `ANTHROPIC_BUILD_MODEL`)
+        have their own defaults and are unaffected.
   - [ ] `OWNER_API_TOKEN` — a strong, unique random value (not a dev token).
 - [ ] **`INSTANTLY_POLL_INTERVAL_MS` must be set (non-zero).** We do NOT pay for
       Instantly's webhook tier, so inbound replies arrive via the `/emails`
@@ -446,6 +453,94 @@ installed: **Stripe CLI** (winget `Stripe.StripeCli`) + **Playwright Chromium**.
 - **Verified:** `npm run typecheck` clean, **192/192 tests**, `npm run demo`
   end-to-end, worker boots clean and reads `.env` (poller enabled at 300000 ms).
   Docs committed + pushed (`f9631d1` on `william-business-head`).
+
+### Done (Visual scoring + email-only gate + per-task models, ~225 tests green)
+
+**The change in one line:** outreach is now **email-only** (a lead with no real
+email is `disqualified`, never contacted), email discovery is **staged + cost-
+ordered**, the audit screenshots get a **Haiku vision score** that feeds the lead
+score bidirectionally, and each Anthropic call now runs on a **per-task model**
+(the global default flipped Opus → Haiku). All mock-first: local stays dry-run,
+`npm run demo` + the suite pass with **zero keys**.
+
+#### Email-finding logic (LOGGED at owner's explicit request)
+
+- **Email-only outreach.** William contacts leads by email only. A lead with **no
+  real email** (a phone number alone counts as no email) is set to status
+  **`disqualified`** — the record is **KEPT** (not deleted), it is just never
+  contacted. Reachability in scoring is now **email-only** (a phone no longer
+  makes a lead reachable).
+- **Staged, cost-ordered discovery in `handleContact`** — the browser fallback
+  runs **only on a regex miss/placeholder**, never on every lead:
+  1. **Cheap homepage pass** — `firstRealEmail(audit.extracted.contactEmails)`
+     (placeholder-filtered, no network).
+  2. **Playwright subpage crawl** (`crawlForEmail`) — only on a miss. Headless
+     Chromium, `waitUntil:"networkidle"`, reads **both `innerText` and raw HTML**
+     across likely subpaths (`/contact`, `/about`, `/team`, `/location`, `/book`,
+     `/menu`, …), placeholder-blocklisted, **robots.txt-respected**, and
+     **dry-run-safe** (returns empty under dry-run → local does no crawling).
+  3. **Enrichment provider** (`ENRICHMENT_API_KEY`) on a continued miss.
+  4. **None found → `disqualified` + an OwnerRequest** (blocked ≠ stuck,
+     invariant 6).
+- **Shared placeholder/extraction helpers in `@william/core`**:
+  `isPlaceholderEmail`, `firstRealEmail`, `extractEmails`. `heuristics.extractSignals`
+  now uses the shared `extractEmails` (one source of truth). New `Contact.emailSource`
+  value **`"website_crawled"`** records a crawl-discovered address.
+- **Pipeline reordered** to `lead.audit → lead.contact → lead.score →
+  outreach.draft` — the email gate and the visual-scoring cost now sit **after**
+  email resolution (no point scoring/visual-scoring a lead we can't email).
+
+#### Visual scoring
+
+- **`llm.scoreVisualDesign`** — a **Haiku vision** call that scores the audit
+  screenshots; produces a new **`VisualAssessment`** schema stored on
+  `WebsiteAudit.visualAssessment`. Runs in `handleScore` **only when screenshots
+  exist** (playwright mode), on an **operational ticket**, mock-first (`null` in
+  local/dry-run → behavior unchanged).
+- **`scoreLead(audit, visual, config)`** combines the signals **bidirectionally**:
+  a confident **`weak`** verdict **floors the score to warm** (promote a lead the
+  heuristics under-rated); a confident **`strong`** verdict **caps it to skip**
+  (demote a lead that already looks great). Reachability is **email-only**.
+
+#### Per-task Anthropic models
+
+- **`ANTHROPIC_MODEL` default flipped Opus → Haiku** (`claude-haiku-4-5-20251001`).
+  It is the global fallback and drives **reply-classification** + **transcript
+  extraction**.
+- **`ANTHROPIC_VISUAL_MODEL`** (Haiku) — visual scoring;
+  **`ANTHROPIC_OUTREACH_MODEL`** (Haiku) — outreach copy;
+  **`ANTHROPIC_BUILD_MODEL`** (`claude-sonnet-4-6`) — build prompts.
+  (This supersedes the earlier Phase F notes that said build prompts / outreach
+  ran on Opus 4.8.)
+- **⚠️ Activation caveat:** an explicit `ANTHROPIC_MODEL=claude-opus-4-8` left in
+  `.env` from the activation session **OVERRIDES the new Haiku default** — unset
+  it (or set the Haiku id) to actually run reply-classify/transcripts on Haiku.
+  (Also in the "Before going LIVE" checklist and `docs/setup.md`.)
+
+#### Outreach + build prompt
+
+- **Outreach copy now references the real findings** — the visual assessment +
+  Lighthouse results — fenced as **untrusted DATA** (invariant 1). The opt-out /
+  Cornell / mockup (B1) claims and the `validateDraft` template-fallback guarantees
+  are **unchanged**.
+- **Build prompts condensed to ≤3 paragraphs** (generated by **Sonnet 4.6**),
+  still requiring **every owner element** (Higgsfield, GSAP/Three.js, real backend,
+  loading states, SEO, Chrome DevTools QA), now weaving in "make use of Framer,
+  Figma, React, frontend-design", and ending with the literal line
+  **`do not use superpowers`**.
+
+#### Config + owner decision
+
+- **`RuntimeConfig`** gained **`visualScoring`** (`weight` /
+  `promoteMinConfidence` / `demoteMinConfidence`) and **`emailDiscovery`**
+  (`subpaths` / `maxPages`). New env vars: `VISUAL_SCORING_WEIGHT`,
+  `VISUAL_PROMOTE_MIN_CONFIDENCE`, `VISUAL_DEMOTE_MIN_CONFIDENCE`,
+  `EMAIL_DISCOVERY_SUBPATHS`, `EMAIL_DISCOVERY_MAX_PAGES` (`.env.example` updated;
+  documented in `docs/setup.md`).
+- **OWNER DECISION:** robots-disallowed handling stays **OUT of `scoreLead`**
+  (honoring the prior `bea732d "Remove crawl block"` commit); the orphaned robots
+  scoring test was deleted. Robots is **still respected upstream** — the audit
+  aborts and writes a compliance event — so honoring it is unchanged.
 
 ### NEXT STEPS (activation is largely done — staging rehearsal is next)
 
