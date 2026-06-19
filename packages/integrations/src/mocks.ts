@@ -243,6 +243,11 @@ export function createMockLlm(log: Logger): LlmAdapter {
       // No real LLM: signal "use your deterministic keyword extractor" via null.
       return null;
     },
+    async scoreVisualDesign(ticket) {
+      requireTicket(ticket, "llm.scoreVisualDesign");
+      // No real LLM: signal "score deterministically only" via null.
+      return null;
+    },
   };
 }
 

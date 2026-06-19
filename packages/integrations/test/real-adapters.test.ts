@@ -8,6 +8,8 @@ import {
   createGmailAdapter,
   createInstantlyAdapter,
   createIntegrations,
+  createLlmAdapter,
+  createMockLlm,
   createStripeAdapter,
   createVercelAdapter,
   stripeSignatureValid,
@@ -246,6 +248,55 @@ describe("vercel real adapter", () => {
     expect(sent.files.map((f) => f.file).sort()).toEqual(["index.html", "package.json", "src/App.tsx"]);
     expect(sent.projectSettings).toEqual({ framework: "vite" });
     expect(sent.target).toBe("production");
+  });
+});
+
+describe("llm real adapter — scoreVisualDesign", () => {
+  // A fetch that always returns a non-200 error (used to assert "never called").
+  const failFetch = (async () => new Response("network error", { status: 500 })) as typeof fetch;
+  // A fetch that returns a pre-built JSON body with status 200.
+  function okJsonFetch(body: unknown): typeof fetch {
+    return (async () => new Response(JSON.stringify(body), { status: 200 })) as typeof fetch;
+  }
+  // A live (non-dry-run) ticket.
+  const liveTicket = ticket(false);
+  // A dry-run ticket.
+  const dryRunTicket = ticket(true);
+
+  it("scoreVisualDesign: mock returns null", async () => {
+    const mock = createMockLlm(log);
+    const out = await mock.scoreVisualDesign(liveTicket, {
+      companyName: "Joe's", niche: "barbershop", weaknesses: [], images: [],
+    });
+    expect(out).toBeNull();
+  });
+
+  it("scoreVisualDesign: real adapter returns null under dry-run (no network)", async () => {
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-test" }, fetchImpl: failFetch }, log);
+    const out = await llm.scoreVisualDesign(dryRunTicket, {
+      companyName: "Joe's", niche: "barbershop", weaknesses: [], images: [{ mediaType: "image/png", dataBase64: "AAA" }],
+    });
+    expect(out).toBeNull(); // failFetch never called
+  });
+
+  it("scoreVisualDesign: parses a valid model JSON response", async () => {
+    const body = { content: [{ type: "text", text: JSON.stringify({
+      visualOpportunityScore: 70, verdict: "weak", confidence: 0.8, findings: [], positives: [],
+    }) }] };
+    const fetchImpl = okJsonFetch(body);
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-test", ANTHROPIC_VISUAL_MODEL: "claude-haiku-4-5-20251001" }, fetchImpl }, log);
+    const out = await llm.scoreVisualDesign(liveTicket, {
+      companyName: "Joe's", niche: "barbershop", weaknesses: ["no CTA"],
+      images: [{ mediaType: "image/png", dataBase64: "AAA" }],
+    });
+    expect(out?.verdict).toBe("weak");
+    expect(out?.model).toBe("claude-haiku-4-5-20251001"); // adapter stamps the model
+  });
+
+  it("scoreVisualDesign: invalid JSON → null", async () => {
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-test" }, fetchImpl: okJsonFetch({ content: [{ type: "text", text: "not json" }] }) }, log);
+    const out = await llm.scoreVisualDesign(liveTicket, { companyName: "x", niche: "y", weaknesses: [], images: [{ mediaType: "image/png", dataBase64: "AAA" }] });
+    expect(out).toBeNull();
   });
 });
 

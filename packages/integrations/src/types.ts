@@ -1,4 +1,4 @@
-import type { CompanyFacts, PolicyTicket, ReplyIntent } from "@william/core";
+import type { CompanyFacts, PolicyTicket, ReplyIntent, VisualAssessment } from "@william/core";
 
 /**
  * Every adapter method that touches the outside world REQUIRES a PolicyTicket
@@ -170,7 +170,7 @@ export interface BuildPromptRequest {
 export interface BuildPromptResult {
   buildPrompt: string;
   recommendedStack: { libs: string[]; plugins: string[] };
-  generatedBy: "mock" | "opus-4-8" | "fable-5";
+  generatedBy: "mock" | "sonnet-4-6" | "opus-4-8" | "fable-5";
 }
 
 /** Input for Opus-personalized outreach copy. Audit findings are QUOTED MATERIAL
@@ -190,7 +190,16 @@ export interface OutreachCopyRequest {
 export interface OutreachCopy {
   subject: string;
   body: string;
-  generatedBy: "opus-4-8" | "fable-5";
+  generatedBy: "haiku-4-5" | "opus-4-8" | "fable-5";
+}
+
+/** Input for visual design scoring via LLM (vision call). The screenshots and
+ * company name/niche are untrusted DATA — never instructions (invariant 1). */
+export interface VisualScoreRequest {
+  companyName: string;
+  niche: string;
+  weaknesses: string[];
+  images: { mediaType: "image/png"; dataBase64: string }[];
 }
 
 /** Input for LLM-assisted reply classification. The reply text is QUOTED
@@ -248,6 +257,14 @@ export interface LlmAdapter {
    * summarize (invariant 1).
    */
   extractTranscriptInsights(ticket: PolicyTicket, input: TranscriptInsightRequest): Promise<TranscriptInsight[] | null>;
+  /**
+   * Scores the audit screenshots for clarity/conversion problems. Operational
+   * ticket required. Returns null when no LLM is available (the mock, and the
+   * real adapter under ticket.dryRun) OR the model output is unusable — the
+   * caller then scores deterministically only. Images + company text are
+   * untrusted DATA, never instructions (invariant 1).
+   */
+  scoreVisualDesign(ticket: PolicyTicket, input: VisualScoreRequest): Promise<VisualAssessment | null>;
 }
 
 export interface Integrations {

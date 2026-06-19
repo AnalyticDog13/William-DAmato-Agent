@@ -48,7 +48,7 @@ export const WebsiteBrief = BaseEntity.extend({
   /** Recommended build model — defaults to Fable 5 for design quality. */
   targetModel: z.enum(["fable-5", "opus-4-8"]).default("fable-5"),
   /** How the prompt was produced: deterministic mock template, or a real LLM. */
-  generatedBy: z.enum(["mock", "opus-4-8", "fable-5"]).default("mock"),
+  generatedBy: z.enum(["mock", "sonnet-4-6", "opus-4-8", "fable-5"]).default("mock"),
   /** Set when the owner marks the site ready (site.ship). */
   repoUrl: z.string().nullable().default(null),
   status: WebsiteBriefStatus.default("ready"),

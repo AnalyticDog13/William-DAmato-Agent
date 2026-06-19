@@ -58,7 +58,7 @@ export function detectCredentials(env: NodeJS.ProcessEnv, williamEnv: RuntimeCon
     { integration: "calendar", mode: mode(!!(env.GMAIL_CLIENT_ID && env.GMAIL_REFRESH_TOKEN)), detail: "Google OAuth (shared with Gmail)" },
     { integration: "higgsfield", mode: mode(env.HIGGSFIELD_ENABLED === "true"), detail: "HIGGSFIELD_ENABLED + MCP access" },
     { integration: "firecrawl", mode: mode(!!env.FIRECRAWL_API_KEY), detail: "FIRECRAWL_API_KEY" },
-    { integration: "anthropic", mode: mode(!!env.ANTHROPIC_API_KEY), detail: "ANTHROPIC_API_KEY (Opus build prompts + outreach)" },
+    { integration: "anthropic", mode: mode(!!env.ANTHROPIC_API_KEY), detail: "ANTHROPIC_API_KEY (per-task models: visual/outreach/classify=Haiku, build=Sonnet)" },
   ];
 }
 
