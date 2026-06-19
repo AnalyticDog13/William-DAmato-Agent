@@ -6,7 +6,7 @@ interface Timeline {
   lead: { id: string; domain: string | null; websiteUrl: string | null; niche: string; status: string };
   company: { name: string; city: string | null } | null;
   contacts: { email: string | null; verification: string; emailSource: string | null; confidence: number }[];
-  audits: { id: string; summary: string; auditScore: number; weaknesses: { category: string; detail: string; severity: string }[]; outreachAngles: string[]; a11yFindings: string[]; lighthouse: { performance: number | null; accessibility: number | null; bestPractices: number | null; seo: number | null } | null; pages: { url: string; screenshotPath: string | null; mobileScreenshotPath: string | null }[] }[];
+  audits: { id: string; summary: string; auditScore: number; weaknesses: { category: string; detail: string; severity: string }[]; outreachAngles: string[]; a11yFindings: string[]; lighthouse: { performance: number | null; accessibility: number | null; bestPractices: number | null; seo: number | null } | null; pages: { url: string; screenshotPath: string | null; mobileScreenshotPath: string | null }[]; visualAssessment: { visualOpportunityScore: number; verdict: string; confidence: number; findings: { category: string; detail: string; severity: string }[]; positives: string[]; model: string } | null }[];
   scores: { score: number; tier: string; reasons: string[] }[];
   drafts: { id: string; status: string; subject: string; body: string }[];
   replies: { intent: string; intentConfidence: number; bodyExcerpt: string; recommendedNextStep: string }[];
@@ -242,6 +242,25 @@ export function LeadDetail() {
                     <Screenshot leadId={t.lead.id} path={audit.pages[0].mobileScreenshotPath} label="Mobile" />
                   )}
                 </div>
+              )}
+              {audit.visualAssessment && (
+                <>
+                  <h3 style={{ marginTop: 12 }}>Visual assessment</h3>
+                  <p className="sub">
+                    <span className={`badge ${audit.visualAssessment.verdict === "weak" ? "red" : audit.visualAssessment.verdict === "adequate" ? "amber" : "green"}`}>{audit.visualAssessment.verdict}</span>{" "}
+                    opportunity {audit.visualAssessment.visualOpportunityScore}/100 · confidence {(audit.visualAssessment.confidence * 100).toFixed(0)}% · <span className="mono">{audit.visualAssessment.model}</span>
+                  </p>
+                  {audit.visualAssessment.findings.length > 0 && (
+                    <ul>
+                      {audit.visualAssessment.findings.map((f, i) => (
+                        <li key={i}><span className={`badge ${f.severity === "high" ? "red" : f.severity === "medium" ? "amber" : "muted"}`}>{f.category}</span> {f.detail}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {audit.visualAssessment.positives.length > 0 && (
+                    <p className="sub">Positives: {audit.visualAssessment.positives.join("; ")}</p>
+                  )}
+                </>
               )}
               {audit.outreachAngles.length > 0 && (
                 <>
