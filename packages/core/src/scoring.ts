@@ -35,11 +35,6 @@ export function scoreLead(
     reasons.push(`${points > 0 ? "+" : ""}${points}: ${reason}`);
   };
 
-  // Short-circuit: robots.txt disallow means we cannot crawl/audit — zero value.
-  if (audit.robotsAllowed === false) {
-    return { score: 0, tier: "skip", reasons: ["0: robots.txt disallows crawling — lead zeroed out."] };
-  }
-
   if (!audit.hasWebsite) {
     add(60, "No website at all — highest-value prospect for a new build.");
   } else {

@@ -67,12 +67,6 @@ describe("scoreLead", () => {
     expect(r.score).toBeGreaterThanOrEqual(65);
   });
 
-  it("robots.txt disallow zeroes the lead out", () => {
-    const r = scoreLead(audit({ robotsAllowed: false, hasSsl: false, mobileFriendly: false }));
-    expect(r.tier).toBe("skip");
-    expect(r.score).toBeLessThan(20);
-  });
-
   it("every score movement is explained", () => {
     const r = scoreLead(audit({ hasSsl: false }));
     expect(r.reasons.length).toBeGreaterThan(0);
