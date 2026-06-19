@@ -35,10 +35,6 @@ export function recommendedStack(): BuildPromptResult["recommendedStack"] {
   };
 }
 
-function bullet(items: string[], fallback: string): string {
-  return items.length ? items.map((i) => `- ${i}`).join("\n") : `- ${fallback}`;
-}
-
 /**
  * Build the full build prompt the owner pastes into Fable 5 / Opus 4.8. This is
  * the deterministic mock output (also the real adapter's dry-run output).
@@ -52,55 +48,31 @@ export function templateBuildPrompt(input: BuildPromptRequest): BuildPromptResul
     f.contact.address ? `address ${f.contact.address}` : null,
   ].filter(Boolean) as string[];
 
+  const contactLine = contactLines.length ? contactLines.join(", ") : "(none captured — ask the owner)";
   const buildPrompt = [
-    `# Build prompt — ${input.companyName} (${input.niche})`,
+    `Build a new, **awwward-winning-worthy** marketing website for **${input.companyName}** (a ${input.niche})` +
+      (input.websiteUrl ? `, replacing ${input.websiteUrl}` : "") +
+      ". It must be mobile-first and fully working/interactive on mobile, and fast (lazy-load heavy assets, respect " +
+      "`prefers-reduced-motion`), with graceful **loading** states — skeleton/placeholder base layers and loading " +
+      "spinners before content/assets are ready, ZERO layout shift, plus clear empty and error states. Make use of " +
+      "**React**, **Framer** Motion, **Figma**, and **frontend-design**; animate with **GSAP** (scroll/timeline) and " +
+      "**Three.js** (`@react-three/fiber` for 3D/WebGL); generate the hero/gallery imagery with **Higgsfield** so it " +
+      "is bespoke and on-brand, not stock.",
     "",
-    `Build a brand-new marketing website for **${input.companyName}**, a ${input.niche}.` +
-      (input.websiteUrl ? ` It replaces their current site (${input.websiteUrl}).` : ""),
+    "Ship a REAL working **backend** (Next.js API routes/server actions, or Node/Express + Postgres/SQLite) for every " +
+      "interactive feature (contact, booking/lead capture, newsletter): server-side validation, spam protection, " +
+      "persistence, and an owner notification on submit — not a static mockup. Cover basic **SEO**: semantic HTML + " +
+      "heading hierarchy, a unique per-page `<title>` and **meta description**, Open Graph/Twitter tags, descriptive " +
+      "image alt text, `sitemap.xml` + `robots.txt`, and JSON-LD `LocalBusiness` structured data. Use ONLY these real " +
+      `facts (do not invent details): services ${f.services.length ? f.services.join(", ") : "(none — ask the owner)"}; ` +
+      `about ${f.about || "(none — ask the owner)"}; hours ${f.hours || "(none — ask the owner)"}; contact ${contactLine}. ` +
+      `Fix the audit weaknesses: ${input.weaknesses.length ? input.weaknesses.join("; ") : "general modernization"}.`,
     "",
-    "## Non-negotiable quality bar",
-    "- Make it **awwward-winning worthy**: bold, modern, memorable art direction with tasteful, performant motion.",
-    "- It MUST be **mobile-friendly, fully interactive, and fully working on mobile** — design mobile-first, test every",
-    "  interaction (nav, animations, forms, 3D/scroll effects) on small touch screens, and never ship a layout that",
-    "  breaks or a control that is unusable on a phone.",
-    "- Fast: lazy-load heavy assets, respect `prefers-reduced-motion`, keep Lighthouse performance and accessibility high.",
-    "- Generate the hero, gallery, and other visual/motion assets with **Higgsfield** (AI image/video generation) so the imagery is bespoke and on-brand rather than generic stock.",
-    "- Animate with **GSAP** (scroll-triggered + timeline animation) and **Three.js** (`@react-three/fiber` for 3D/WebGL hero moments) — purposeful, performant motion, never gratuitous.",
-    "- Handle loading gracefully: show **skeleton/placeholder base layers and loading spinners** before content and assets are ready, with ZERO layout shift, plus clear empty and error states.",
-    "",
-    "## Recommended stack",
-    `- Libraries: ${stack.libs.join(", ")}`,
-    `- Plugins/helpers: ${stack.plugins.join(", ")}`,
-    "",
-    "## Backend & functionality (ship a REAL, working backend — not a static mockup)",
-    "- Build a real backend: server handlers / API routes backed by a database for every interactive feature (contact form, booking/lead capture, newsletter, etc.). The site must actually work end-to-end.",
-    "- Validate inputs server-side, add spam/abuse protection, persist every submission, and email/notify the owner on submit.",
-    "- Recommended: Next.js (App Router — server actions/API routes) OR a Vite SPA + a Node/Express API; a database such as Postgres or SQLite. Keep secrets in env vars and include a `.env.example` + setup/run instructions.",
-    "",
-    "## Fix these weaknesses from the audit of their current site",
-    bullet(input.weaknesses, "General modernization — the current site looks dated and converts poorly."),
-    "",
-    "## Use these REAL business facts (do not invent details; quote/transform only what is given)",
-    `- Services: ${f.services.length ? f.services.join(", ") : "(none captured — ask the owner before inventing)"}`,
-    `- About: ${f.about || "(none captured)"}`,
-    `- Hours: ${f.hours || "(none captured)"}`,
-    `- Contact: ${contactLines.length ? contactLines.join(", ") : "(none captured)"}`,
-    "",
-    "## Sections to include",
-    "- Hero with a clear single call-to-action above the fold",
-    "- Services, an about/story section, social proof/trust, a gallery, and a prominent contact/booking section",
-    "",
-    "## Basic SEO",
-    "- Semantic HTML with a correct heading hierarchy (one `<h1>` per page, logical `<h2>`/`<h3>`), landmark elements, and descriptive image `alt` text.",
-    "- A unique `<title>` and **meta description** per page, Open Graph + Twitter-card tags for link previews, and a canonical URL.",
-    "- Add `sitemap.xml` + `robots.txt`, and **JSON-LD `LocalBusiness` structured data** (name, address, phone, hours) so the business ranks well in local search.",
-    "",
-    "## Before shipping — verify build quality with Chrome DevTools",
-    "- Run **Lighthouse** (Chrome DevTools) and reach high Performance / Accessibility / Best-Practices / SEO scores; fix any regression before delivery.",
-    "- Use the **Performance** panel to remove long tasks/jank, and ship with a **Console** free of errors and warnings.",
-    "- Test with **device emulation** (mobile viewports + throttled network) and confirm the skeletons/spinners, animations, and the backend forms all work.",
-    "",
-    "Deliver a complete, deployable project (a git repo) with a working backend. The site owner will review it and ship it.",
+    "Before delivery, review your work with **Chrome DevTools**: run Lighthouse (high Performance/Accessibility/" +
+      "Best-Practices/SEO), use the Performance panel to remove long tasks/jank, ship a Console free of errors, and " +
+      "test mobile device emulation with throttled network — confirm the skeletons/spinners, animations, and backend " +
+      "forms all work. Deliver a complete, deployable git repo. Recommended stack: " +
+      `${stack.libs.join(", ")} (plugins: ${stack.plugins.join(", ")}).\ndo not use superpowers`,
   ].join("\n");
 
   return { buildPrompt, recommendedStack: stack, generatedBy: "mock" };
