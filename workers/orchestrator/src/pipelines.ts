@@ -19,9 +19,11 @@ import {
   type OutreachDraft,
   type SiteProject,
   type SourceProvenance,
+  type VisualAssessment,
   type WebsiteBrief,
 } from "@william/core";
 import type { CompanyScrapeHints, ExecutionResult, OutreachCopyRequest } from "@william/integrations";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { auditWebsite, crawlForEmail, qualityCheckPreview } from "@william/worker-site-auditor";
 import {
@@ -199,7 +201,32 @@ const handleScore: JobHandler = async (ctx, job) => {
   const lead = getLead(ctx, job);
   const audit = ctx.store.audits.get(job.payload.auditId as string);
   if (!audit) throw new Error(`Audit ${job.payload.auditId} not found`);
-  const result = scoreLead(audit);
+
+  // Visual qualification — only when screenshots exist (playwright mode). Read the
+  // PNGs, base64-encode, and ask the vision model. Null (mock/http/dry-run/failure)
+  // ⇒ deterministic-only score (unchanged behavior).
+  let visual: VisualAssessment | null = null;
+  const shot = audit.pages[0];
+  const paths = [shot?.screenshotPath, shot?.mobileScreenshotPath].filter((p): p is string => !!p);
+  if (paths.length > 0) {
+    try {
+      const images = paths.map((p) => ({ mediaType: "image/png" as const, dataBase64: readFileSync(p).toString("base64") }));
+      const ticket = operationalTicket(ctx, "llm.scoreVisualDesign", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId);
+      visual = await ctx.integrations.llm.scoreVisualDesign(ticket, {
+        companyName: ctx.store.companies.get(lead.companyId)?.name ?? lead.domain ?? "the business",
+        niche: lead.niche,
+        weaknesses: audit.weaknesses.map((w) => w.detail),
+        images,
+      });
+      if (visual) {
+        ctx.store.audits.save({ ...audit, visualAssessment: visual });
+        ctx.store.writeActivity(lead.id, "visual_scored", `Visual verdict ${visual.verdict} (${visual.visualOpportunityScore}/100, conf ${visual.confidence.toFixed(2)})`, { traceId: job.traceId });
+      }
+    } catch (err) {
+      ctx.log.warn("visual scoring failed; scoring deterministically", { leadId: lead.id, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  const result = scoreLead(audit, visual, ctx.config.visualScoring);
   const now = nowIso();
   ctx.store.leadScores.insert({
     id: newId("scr"),

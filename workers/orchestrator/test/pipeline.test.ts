@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { newId, newTraceId, nowIso } from "@william/core";
@@ -916,5 +917,99 @@ describe("instantly reply poller", () => {
     ctx.store.queue.enqueue({ type: "instantly.pollReplies", payload: {}, traceId: newTraceId() });
     await runUntilEmpty(ctx, 100, futureClock);
     expect(ctx.store.replyEvents.list({ leadId: l.id }).filter((e) => e.externalMessageId === "m1").length).toBe(1);
+  });
+});
+
+describe("visual scoring in handleScore (task 9)", () => {
+  // 1×1 transparent PNG, base64-decoded — the smallest valid PNG file.
+  const TINY_PNG = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    "base64",
+  );
+
+  // Get a real lead + audit through the normal pipeline (mock audit, http/mock mode
+  // → screenshot paths are null), then drive lead.score directly so the test owns
+  // the screenshot paths and the stub.
+  async function leadAndAudit(name: string) {
+    ingestLead(ctx, lead(name, `https://${name.toLowerCase().replace(/\s+/g, "-")}.example.com`));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+    const audit = ctx.store.audits.list({ leadId: l.id })[0]!;
+    return { lead: l, audit };
+  }
+
+  function runScore(leadId: string, auditId: string) {
+    return import("../src/pipelines").then(({ JOB_HANDLERS }) => {
+      const now = nowIso();
+      const job = {
+        id: newId("job"),
+        type: "lead.score",
+        payload: { leadId, auditId },
+        status: "running" as const,
+        traceId: newTraceId(),
+        leadId,
+        runAt: now,
+        attempts: 0,
+        maxAttempts: 3,
+        lastError: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      return JOB_HANDLERS["lead.score"]!(ctx, job);
+    });
+  }
+
+  it("scores with the visual assessment when screenshots exist and persists it", async () => {
+    const { lead: l, audit } = await leadAndAudit("Visual Barbers");
+
+    // Write a real PNG and point the audit's first page at it (desktop + mobile).
+    const dir = mkdtempSync(join(tmpdir(), "william-visual-"));
+    const shot = join(dir, "desktop.png");
+    const mobileShot = join(dir, "mobile.png");
+    writeFileSync(shot, TINY_PNG);
+    writeFileSync(mobileShot, TINY_PNG);
+    const page0 = audit.pages[0] ?? { url: audit.url ?? "https://x", title: null, loadMs: null, issues: [] };
+    ctx.store.audits.save({
+      ...audit,
+      pages: [{ ...page0, screenshotPath: shot, mobileScreenshotPath: mobileShot }, ...audit.pages.slice(1)],
+    });
+
+    let receivedImages = 0;
+    ctx.integrations.llm.scoreVisualDesign = async (_ticket, input) => {
+      receivedImages = input.images.length;
+      return { visualOpportunityScore: 88, verdict: "weak", confidence: 0.9, findings: [], positives: [], model: "stub" };
+    };
+
+    await runScore(l.id, audit.id);
+
+    // Both screenshots were read + base64-encoded and handed to the vision model.
+    expect(receivedImages).toBe(2);
+    const saved = ctx.store.audits.get(audit.id)!;
+    expect(saved.visualAssessment?.verdict).toBe("weak");
+    expect(ctx.store.activity.list({ leadId: l.id }).some((a) => a.kind === "visual_scored")).toBe(true);
+
+    // The score reflects the visual layer (weak verdict promotes into warm/hot).
+    const score = ctx.store.leadScores.list({ leadId: l.id })[0]!;
+    expect(score.tier === "warm" || score.tier === "hot").toBe(true);
+  });
+
+  it("scores deterministically when there are no screenshots — the adapter is never called", async () => {
+    const { lead: l, audit } = await leadAndAudit("Mock Mode Barbers");
+    // Mock/http audit → screenshot paths are null already; assert and proceed.
+    expect(audit.pages[0]?.screenshotPath ?? null).toBeNull();
+
+    let called = false;
+    ctx.integrations.llm.scoreVisualDesign = async () => {
+      called = true;
+      return null;
+    };
+
+    await runScore(l.id, audit.id);
+
+    expect(called).toBe(false);
+    expect(ctx.store.audits.get(audit.id)!.visualAssessment).toBeNull();
+    expect(ctx.store.activity.list({ leadId: l.id }).some((a) => a.kind === "visual_scored")).toBe(false);
+    // A score was still produced (deterministic only).
+    expect(ctx.store.leadScores.list({ leadId: l.id }).length).toBeGreaterThan(0);
   });
 });
