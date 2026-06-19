@@ -858,6 +858,8 @@ import { crawlForEmail } from "../src/email-crawl";
 
 const testLog = { info() {}, warn() {}, error() {}, debug() {} } as any;
 const lead = { id: "lead_1", websiteUrl: "https://joesbarber.com", domain: "joesbarber.com" } as any;
+const liveTicket = { dryRun: false } as any;
+const dryRunTicket = { dryRun: true } as any;
 
 // fetch stub: robots.txt allows everything
 const allowFetch = (async () => ({ ok: true, text: async () => "User-agent: *\nAllow: /" })) as unknown as typeof fetch;
@@ -887,27 +889,35 @@ describe("crawlForEmail", () => {
       "https://joesbarber.com": { html: "<p>info@example.com</p>", innerText: "info@example.com" },
       "https://joesbarber.com/contact": { html: "<p>owner@joesbarber.com</p>", innerText: "Call or email owner@joesbarber.com" },
     });
-    const out = await crawlForEmail(lead, { log: testLog, launchBrowser: launcher, fetchImpl: allowFetch, subpaths: ["/contact"], maxPages: 8 });
+    const out = await crawlForEmail(lead, { log: testLog, ticket: liveTicket, launchBrowser: launcher, fetchImpl: allowFetch, subpaths: ["/contact"], maxPages: 8 });
     expect(out.email).toBe("owner@joesbarber.com");
     expect(out.foundOn).toBe("https://joesbarber.com/contact");
   });
 
   it("returns null when only placeholder emails exist", async () => {
     const launcher = fakeLauncher({ "https://joesbarber.com": { html: "info@example.com", innerText: "info@example.com" } });
-    const out = await crawlForEmail(lead, { log: testLog, launchBrowser: launcher, fetchImpl: allowFetch, subpaths: [], maxPages: 8 });
+    const out = await crawlForEmail(lead, { log: testLog, ticket: liveTicket, launchBrowser: launcher, fetchImpl: allowFetch, subpaths: [], maxPages: 8 });
     expect(out.email).toBeNull();
   });
 
   it("returns null when the browser is unavailable", async () => {
-    const out = await crawlForEmail(lead, { log: testLog, launchBrowser: async () => null, fetchImpl: allowFetch, subpaths: ["/contact"], maxPages: 8 });
+    const out = await crawlForEmail(lead, { log: testLog, ticket: liveTicket, launchBrowser: async () => null, fetchImpl: allowFetch, subpaths: ["/contact"], maxPages: 8 });
     expect(out).toEqual({ email: null, foundOn: null });
   });
 
   it("aborts (null) when robots.txt disallows the site", async () => {
     const blockFetch = (async () => ({ ok: true, text: async () => "User-agent: *\nDisallow: /" })) as unknown as typeof fetch;
     const launcher = fakeLauncher({ "https://joesbarber.com/contact": { html: "owner@joesbarber.com", innerText: "owner@joesbarber.com" } });
-    const out = await crawlForEmail(lead, { log: testLog, launchBrowser: launcher, fetchImpl: blockFetch, subpaths: ["/contact"], maxPages: 8 });
+    const out = await crawlForEmail(lead, { log: testLog, ticket: liveTicket, launchBrowser: launcher, fetchImpl: blockFetch, subpaths: ["/contact"], maxPages: 8 });
     expect(out.email).toBeNull();
+  });
+
+  it("simulates (returns null) under ticket.dryRun without launching a browser", async () => {
+    let launched = false;
+    const launcher: ChromiumLauncher = async () => { launched = true; return null; };
+    const out = await crawlForEmail(lead, { log: testLog, ticket: dryRunTicket, launchBrowser: launcher, fetchImpl: allowFetch, subpaths: ["/contact"], maxPages: 8 });
+    expect(out).toEqual({ email: null, foundOn: null });
+    expect(launched).toBe(false);
   });
 });
 ```
@@ -921,12 +931,15 @@ Expected: FAIL — `Cannot find module '../src/email-crawl'`.
 
 ```ts
 // workers/site-auditor/src/email-crawl.ts
-import { extractEmails, firstRealEmail, type Lead, type Logger } from "@william/core";
+import { extractEmails, firstRealEmail, type Lead, type Logger, type PolicyTicket } from "@william/core";
 import { checkRobots } from "./audit";
 import type { ChromiumLauncher } from "./browser";
 
 export interface EmailCrawlDeps {
   log: Logger;
+  /** Operational ticket authorizing the crawl (mirrors AuditorDeps.ticket). The
+   *  crawl simulates (returns empty) under ticket.dryRun — invariant 2. */
+  ticket: PolicyTicket;
   launchBrowser: ChromiumLauncher;
   fetchImpl?: typeof fetch;
   subpaths: string[];
@@ -947,6 +960,7 @@ export async function crawlForEmail(
   lead: Lead,
   deps: EmailCrawlDeps,
 ): Promise<{ email: string | null; foundOn: string | null }> {
+  if (deps.ticket.dryRun) return { email: null, foundOn: null }; // local never hits the network
   const fetchImpl = deps.fetchImpl ?? fetch;
   if (!lead.websiteUrl) return { email: null, foundOn: null };
   const origin = new URL(lead.websiteUrl).origin;
@@ -1102,12 +1116,14 @@ In `handleContact`, replace the published-email-only branch (the `if (published)
     let source: "website_published" | "website_crawled" | "enrichment" = "website_published";
     let foundOn: string | null = null;
 
-    // 2) Playwright escalation — only on a miss/placeholder, and only with a browser.
-    if (!resolvedEmail && !ctx.config.dryRun && lead.websiteUrl) {
+    // 2) Playwright escalation — only on a miss/placeholder. The operational ticket
+    //    governs dry-run: in local it's a dry-run ticket, so crawlForEmail simulates
+    //    and returns empty (no browser launch, zero network).
+    if (!resolvedEmail && lead.websiteUrl) {
       const ticket = operationalTicket(ctx, "site_audit.crawl", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId);
-      void ticket; // crawl is gated by the same operational op; ticket documents the read
       const crawl = await crawlForEmail(lead, {
         log: ctx.log,
+        ticket,
         launchBrowser: ctx.browserLauncher ?? (await import("@william/worker-site-auditor")).launchChromium,
         subpaths: ctx.config.emailDiscovery.subpaths,
         maxPages: ctx.config.emailDiscovery.maxPages,
