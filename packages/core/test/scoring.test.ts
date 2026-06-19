@@ -91,9 +91,10 @@ describe("scoreLead", () => {
       extracted: { contactEmails: ["owner@x.com"], phones: [], socialLinks: {}, ctas: ["book now"], services: [], trustSignals: ["reviews"] },
       weaknesses: [],
     });
-    const visual: VisualAssessment = { visualOpportunityScore: 90, verdict: "weak", confidence: 0.9, findings: [], positives: [], model: "m" };
+    const visual: VisualAssessment = { visualOpportunityScore: 20, verdict: "weak", confidence: 0.9, findings: [], positives: [], model: "m" };
     const promoted = scoreLead(clean, visual);
-    expect(promoted.tier === "warm" || promoted.tier === "hot").toBe(true);
+    expect(promoted.score).toBe(40);
+    expect(promoted.tier).toBe("warm");
   });
 
   it("a confident STRONG verdict demotes a technically-weak site to skip", () => {
