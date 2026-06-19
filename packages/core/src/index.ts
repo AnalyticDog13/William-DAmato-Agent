@@ -3,6 +3,7 @@ export * from "./env";
 export * from "./logging";
 export * from "./normalize";
 export * from "./scoring";
+export * from "./email";
 export * from "./schema/index";
 export * from "./policy/gates";
 export * from "./policy/engine";
