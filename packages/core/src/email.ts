@@ -22,7 +22,6 @@ export const PLACEHOLDER_DOMAINS: ReadonlySet<string> = new Set([
   "wixpress.com",
 ]);
 
-const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
 const ASSET_TAIL_RE = /\.(png|jpg|jpeg|gif|webp|svg|css|js)$/;
 
 /** True when an address is a known placeholder or sits on a placeholder domain. */
@@ -35,7 +34,7 @@ export function isPlaceholderEmail(email: string): boolean {
 
 /** All plausible emails in free text: lowercased, deduped, asset-shaped matches removed. */
 export function extractEmails(text: string): string[] {
-  const found = text.match(EMAIL_RE) ?? [];
+  const found = text.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) ?? [];
   const out = new Set<string>();
   for (const raw of found) {
     const e = raw.toLowerCase();
