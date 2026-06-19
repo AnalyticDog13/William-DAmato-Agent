@@ -30,6 +30,7 @@ function audit(overrides: Partial<WebsiteAudit> = {}): WebsiteAudit {
     summary: "fine site",
     auditScore: 85,
     completedAt: now,
+    visualAssessment: null,
     ...overrides,
   };
 }

@@ -1,6 +1,7 @@
 export * from "./common";
 export * from "./lead";
 export * from "./audit";
+export * from "./visual";
 export * from "./outreach";
 export * from "./deal";
 export * from "./site";

@@ -33,7 +33,7 @@ export interface AuditorDeps {
  *   `npx playwright install chromium`. Falls back to http when unavailable.
  */
 export async function auditWebsite(lead: Lead, deps: AuditorDeps): Promise<WebsiteAudit> {
-  const base: Omit<WebsiteAudit, "summary" | "auditScore"> = {
+  const base: Omit<WebsiteAudit, "summary" | "auditScore" | "visualAssessment"> = {
     id: newId("waud"),
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -59,6 +59,7 @@ export async function auditWebsite(lead: Lead, deps: AuditorDeps): Promise<Websi
       summary: "No website found for this business — a complete build opportunity.",
       auditScore: 0,
       outreachAngles: ["they have no website at all"],
+      visualAssessment: null,
     };
   }
 
@@ -96,16 +97,17 @@ export async function checkRobots(origin: string, fetchImpl: typeof fetch): Prom
   return true;
 }
 
-function robotsAbortedAudit(base: Omit<WebsiteAudit, "summary" | "auditScore">): WebsiteAudit {
+function robotsAbortedAudit(base: Omit<WebsiteAudit, "summary" | "auditScore" | "visualAssessment">): WebsiteAudit {
   return {
     ...base,
     robotsAllowed: false,
     summary: "robots.txt disallows crawling — audit aborted out of respect for the site's policy.",
     auditScore: 50,
+    visualAssessment: null,
   };
 }
 
-function mockAudit(lead: Lead, base: Omit<WebsiteAudit, "summary" | "auditScore">): WebsiteAudit {
+function mockAudit(lead: Lead, base: Omit<WebsiteAudit, "summary" | "auditScore" | "visualAssessment">): WebsiteAudit {
   // Deterministic per-domain pseudo-randomness so demo data is stable.
   const seed = [...(lead.domain ?? "x")].reduce((a, c) => a + c.charCodeAt(0), 0);
   const bad = seed % 3; // 0 = rough site, 1 = mediocre, 2 = decent
@@ -161,13 +163,14 @@ function mockAudit(lead: Lead, base: Omit<WebsiteAudit, "summary" | "auditScore"
           ? "[MOCK AUDIT] Functional but dated site with SEO and trust gaps — good improvement pitch."
           : "[MOCK AUDIT] Solid site; only minor polish opportunities.",
     auditScore: bad === 0 ? 25 : bad === 1 ? 55 : 85,
+    visualAssessment: null,
   };
   return audit;
 }
 
 async function httpAudit(
   lead: Lead,
-  base: Omit<WebsiteAudit, "summary" | "auditScore">,
+  base: Omit<WebsiteAudit, "summary" | "auditScore" | "visualAssessment">,
   deps: AuditorDeps,
 ): Promise<WebsiteAudit> {
   const fetchImpl = deps.fetchImpl ?? fetch;
@@ -196,6 +199,7 @@ async function httpAudit(
       summary: `Website unreachable (${err instanceof Error ? err.message : "fetch failed"}) — treat as no-website lead.`,
       auditScore: 5,
       outreachAngles: ["their listed website doesn't load at all"],
+      visualAssessment: null,
     };
   }
   const loadMs = Date.now() - started;
@@ -220,6 +224,7 @@ async function httpAudit(
     outreachAngles,
     summary: `HTTP audit of ${finalUrl}: ${weaknesses.length} weakness(es) found; ${signals.ctas.length} CTA(s); ${signals.contactEmails.length} published email(s).`,
     auditScore,
+    visualAssessment: null,
   };
 }
 

@@ -26,7 +26,7 @@ const MOBILE_VIEWPORT = { width: 390, height: 844 };
  */
 export async function playwrightAudit(
   lead: Lead,
-  base: Omit<WebsiteAudit, "summary" | "auditScore">,
+  base: Omit<WebsiteAudit, "summary" | "auditScore" | "visualAssessment">,
   deps: PlaywrightAuditDeps,
 ): Promise<WebsiteAudit | null> {
   const url = lead.websiteUrl!;
@@ -84,6 +84,7 @@ export async function playwrightAudit(
       outreachAngles,
       summary: `Browser audit of ${finalUrl}: ${weaknesses.length} weakness(es); Lighthouse perf ${lighthouse?.performance ?? "n/a"}; ${a11yFindings.length} a11y violation type(s).`,
       auditScore,
+      visualAssessment: null,
     };
   } catch (err) {
     deps.log.warn("Playwright audit failed; caller will fall back to http mode", {

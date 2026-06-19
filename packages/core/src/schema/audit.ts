@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BaseEntity, Id, IsoDate } from "./common";
+import { VisualAssessment } from "./visual";
 
 export const LighthouseScores = z.object({
   performance: z.number().min(0).max(100).nullable(),
@@ -58,5 +59,6 @@ export const WebsiteAudit = BaseEntity.extend({
   summary: z.string(),
   auditScore: z.number().min(0).max(100),
   completedAt: IsoDate.nullable(),
+  visualAssessment: VisualAssessment.nullable().default(null),
 });
 export type WebsiteAudit = z.infer<typeof WebsiteAudit>;

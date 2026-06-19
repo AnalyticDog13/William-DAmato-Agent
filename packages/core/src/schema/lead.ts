@@ -56,7 +56,7 @@ export const Contact = BaseEntity.extend({
   name: z.string().nullable(),
   role: z.string().nullable(),
   email: z.string().nullable(),
-  emailSource: z.enum(["website_published", "enrichment", "owner_provided", "reply"]).nullable(),
+  emailSource: z.enum(["website_published", "website_crawled", "enrichment", "owner_provided", "reply"]).nullable(),
   emailProvider: z.string().nullable().default(null),
   verification: ContactVerification.default("unverified"),
   confidence: Confidence.default(0),
