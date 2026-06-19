@@ -7,20 +7,43 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-19 — VISUAL SCORING + EMAIL-ONLY GATE feature shipped
-(see "Visual scoring + email-only gate" session below). **Next session: staging
-rehearsal that exercises the real vision + email-crawl paths**, plus the standing
-activation-time compliance re-review when the real Anthropic/Firecrawl/vision
-paths first run. Prior session (2026-06-17) was ACTIVATION (see "Activation status"
-below: all keys in `.env` + validated live; Gmail re-auth'd + app set to Internal;
-Instantly Growth plan bought + new API V2 key, **verified live 200**). Earlier build session
-(2026-06-16) built
-(all committed + pushed to `william-business-head`, history scrubbed of the
-owner's personal email): LLM reply classification, LLM transcript extraction,
-Firecrawl `mergeScrape`, `.env` auto-loading, and the build-prompt quality bar
-(Higgsfield + real backend + loading states + GSAP/Three.js + basic SEO + Chrome
-DevTools QA). **Owner is filling in `.env` now → next session is ACTIVATION**
-(see step 1 below; `WILLIAM_ENV=staging` is the load-bearing switch).
+**Last updated:** 2026-06-19 — the VISUAL SCORING + EMAIL-ONLY GATE + per-task-model
+feature is **merged to `main` and pushed** (`origin/main` @ `69b6d82`); the
+`william-business-head` branch was **deleted** after merge (its full 50-commit history
+is preserved in `main`). The owner has **updated `.env`**.
+
+### ▶ START HERE (next chat): test the real paths via staging
+
+Everything is **mock-first green** (227 tests, typecheck clean, `npm run demo`), but
+`local` forces dry-run (invariant 3) — so the new **real** paths (the Haiku vision
+score + the Playwright email crawl) have **not run for real yet**. Sequence (full
+detail in `CLAUDE.md` → "NEXT STEPS"):
+
+1. **Local sanity, no side effects:** `npm run typecheck`, `npm test` (expect 227),
+   `npm run demo`, boot `npm run worker` — confirms the updated `.env` broke nothing.
+2. **Staging, SAFE reads first:** `WILLIAM_ENV=staging` **+ `AUDITOR_MODE=playwright`**
+   (required for screenshots; `npx playwright install chromium` if needed) + grant the
+   policy-gate approvals in the dashboard. On a real lead with a website, verify
+   `llm.scoreVisualDesign` (sane `VisualAssessment` + sensible promote/demote) and
+   `crawlForEmail` (finds a subpage email / gate disqualifies email-less, robots
+   respected), plus Firecrawl scrape + Anthropic build-prompt/reply-classify.
+3. **MANDATORY:** re-run `compliance-reviewer` on the live text→prompt **and**
+   image→prompt behavior (now includes the vision call + live crawled page content)
+   **before the first live send**.
+4. Only then enable gated side-effects (Instantly sends, Stripe, prod deploys), then
+   work the "⚠️ Before going LIVE" checklist for production.
+
+⚠️ If you want reply-classify/transcripts on Haiku, make sure no stray
+`ANTHROPIC_MODEL=claude-opus-4-8` remains in `.env` (it overrides the new Haiku
+default). Per-task vars (`ANTHROPIC_VISUAL_MODEL`/`_OUTREACH_MODEL`/`_BUILD_MODEL`)
+have their own defaults.
+
+**Prior context:** the 2026-06-19 feature session is summarized just below; the
+2026-06-17 ACTIVATION session (all keys in `.env` + validated live; Gmail re-auth'd,
+OAuth app set to Internal; Instantly Growth plan + new API V2 key verified live 200)
+is under "Activation status". Earlier (2026-06-16): LLM reply classification, LLM
+transcript extraction, Firecrawl `mergeScrape`, `.env` auto-loading, and the
+build-prompt quality bar — all now on `main`.
 
 ## Visual scoring + email-only gate — 2026-06-19
 

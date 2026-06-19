@@ -542,24 +542,49 @@ score bidirectionally, and each Anthropic call now runs on a **per-task model**
   scoring test was deleted. Robots is **still respected upstream** — the audit
   aborts and writes a compliance event — so honoring it is unchanged.
 
-### NEXT STEPS (activation is largely done — staging rehearsal is next)
+### NEXT STEPS (feature merged to `main`; staging rehearsal is next)
 
-Keys are in `.env` and validated (see "Done (Activation)" above). The remaining
-work is exercising the REAL paths and finishing the last two integrations:
+**Where we are (2026-06-19):** the visual-scoring + email-only-gate + per-task-model
+feature is **merged to `main` and pushed** (`origin/main` @ `69b6d82`); the
+`william-business-head` branch was deleted after merge (its full 50-commit history
+lives in `main` — nothing lost). The owner has **updated `.env`**. Everything passes
+**mock-first** (227 tests, typecheck clean, `npm run demo` end-to-end with zero keys)
+— but **`local` forces dry-run** (invariant 3), so the new **real** paths (the Haiku
+vision call + the Playwright email crawl) have **not yet executed for real**. Doing
+that is the next job.
 
-1. **STAGING REHEARSAL.** (Instantly API already verified live 2026-06-17 — key
-   200, campaign + `emails:read` confirmed; `leads:create/update` write scopes get
-   exercised on the first real send.) The load-bearing switch:
-   **`WILLIAM_ENV=staging`** (local forces dry-run forever — invariant 3).
-   Grant the matching **policy-gate approvals** in the dashboard (a key alone does
-   nothing). Rehearse the SAFE paths FIRST — Firecrawl scrape + Anthropic
-   build-prompt/reply-classification (reads/generation, no outbound, no payment) —
-   confirming the real Firecrawl `about`/contact extraction against actual pages and
-   the live `/emails` poller shape (`TODO(activation)` in `instantly.ts`). Only then
-   enable the gated side-effects (Instantly sends, Stripe, prod deploys).
-2. **Re-run `compliance-reviewer` on the live text→prompt behavior** once the real
-   Anthropic/Firecrawl paths execute (the standing activation-time re-review across
-   the LLM/scrape work). **MANDATORY before the first live send.**
+**What's working right now:** the full DRY-RUN pipeline end-to-end — intake → audit →
+**email gate/staged discovery** → score (**+ visual score when screenshots exist**) →
+draft → approval → simulated send → reply → opportunity → brief → ship draft →
+delivery. Adapters pick real-vs-mock by credential presence; the dashboard renders the
+visual assessment; the policy/compliance suite is green. **Nothing outbound has
+happened yet** (no real send, scrape, vision call, crawl, or payment).
+
+1. **STAGING REHEARSAL — the load-bearing switch is `WILLIAM_ENV=staging`** (local can
+   never go live — invariant 3). Do it in this order:
+   - **(a) Local sanity first, zero side effects:** `npm run typecheck`, `npm test`
+     (expect **227 green**), `npm run demo`, and boot `npm run worker` to confirm it
+     reads the updated `.env` cleanly. Still dry-run — this just proves the `.env`
+     edits broke nothing.
+   - **(b) Staging, SAFE read/generation paths FIRST** (no outbound, no payment): set
+     `WILLIAM_ENV=staging` **and `AUDITOR_MODE=playwright`** (REQUIRED — the visual
+     score only runs when real screenshots exist; run `npx playwright install chromium`
+     if missing). Grant the matching **policy-gate approvals** in the dashboard (a key
+     alone does nothing). Then on a real lead with a website, confirm the NEW paths:
+     the Chromium audit produces screenshots → **`llm.scoreVisualDesign`** returns a
+     sane `VisualAssessment` and the promote/demote shifts the tier sensibly;
+     **`crawlForEmail`** finds a real email on a subpage (and the gate disqualifies a
+     genuinely email-less lead), respecting robots.txt. Alongside: the existing safe
+     reads — Firecrawl `about`/contact extraction on real pages, Anthropic
+     build-prompt + reply-classification, the live `/emails` poller shape
+     (`TODO(activation)` in `instantly.ts`). (Instantly API already verified live
+     2026-06-17 — key 200, campaign + `emails:read` confirmed.)
+   - **(c) Only then** enable the gated side-effects (Instantly sends, Stripe, prod
+     deploys).
+2. **Re-run `compliance-reviewer` on the live text→prompt AND image→prompt behavior**
+   once the real Anthropic/Firecrawl/**vision**/crawl paths execute — this now also
+   covers the screenshots-as-untrusted-DATA vision call (`VISUAL_SCORE_SYSTEM`) and
+   live crawled page content. **MANDATORY before the first live send.**
 3. **Real repo/git-source Vercel deploy for `site.ship`** — today it dry-runs the
    repo URL through `vercel.deploy(sourcePath=repoUrl)`. Real shipping needs the
    Vercel token (have it) + git-source wiring (OwnerRequest exists). Verify Vercel
