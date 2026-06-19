@@ -272,11 +272,13 @@ describe("llm real adapter — scoreVisualDesign", () => {
   });
 
   it("scoreVisualDesign: real adapter returns null under dry-run (no network)", async () => {
-    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-test" }, fetchImpl: failFetch }, log);
+    // A fetch that THROWS when invoked — proves the dry-run guard returns null without calling fetch.
+    const throwFetch = (async () => { throw new Error("network call forbidden in dry-run"); }) as unknown as typeof fetch;
+    const llm = createLlmAdapter({ env: { ANTHROPIC_API_KEY: "sk-test" }, fetchImpl: throwFetch }, log);
     const out = await llm.scoreVisualDesign(dryRunTicket, {
       companyName: "Joe's", niche: "barbershop", weaknesses: [], images: [{ mediaType: "image/png", dataBase64: "AAA" }],
     });
-    expect(out).toBeNull(); // failFetch never called
+    expect(out).toBeNull(); // throwFetch never invoked
   });
 
   it("scoreVisualDesign: parses a valid model JSON response", async () => {
