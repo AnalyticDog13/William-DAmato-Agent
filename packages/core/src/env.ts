@@ -13,13 +13,21 @@ export type WilliamEnv = "local" | "staging" | "production";
  * the function is only ever called from Node entry points.
  */
 export function loadDotEnv(path = ".env"): void {
-  // process.loadEnvFile throws if the file is missing/unreadable — treat as a
-  // no-op (credentials are optional; the system stays dry-run with mocks until
-  // real values exist).
+  // process.loadEnvFile throws if the file is missing/unreadable. A MISSING file
+  // (ENOENT) is the normal case — credentials are optional; the system stays
+  // dry-run with mocks until real values exist (Blocked ≠ stuck). But a file that
+  // IS present yet fails to parse/read is worth surfacing, so a typo'd `.env`
+  // doesn't silently start with mocks.
   try {
     process.loadEnvFile(path);
-  } catch {
-    // no .env present — fine.
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ENOENT") {
+      console.warn(
+        `loadDotEnv: ${path} present but could not be loaded:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 }
 

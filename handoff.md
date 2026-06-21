@@ -7,27 +7,38 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-21 — **first real outbound is live + lead-sourcing build started.**
-Two leads were approved and pushed to the live Instantly campaign (queued; they send Monday —
-the campaign is weekdays-only). Everything through this session is **COMMITTED + PUSHED** on
-`main` (`5cd2a2f`→`726d32d`→`35bee7d`→ spec `823da8b`→ plan `5baad73`); 242 tests green,
-typecheck clean, `npm run demo` 0 dead-letter, `compliance-reviewer` 8/8 PASS on the outreach
-delta. The running `npm run worker` must be **restarted** to load changes. **Still unproven
-live:** the inbound side (reply → poller → classifier → opportunity → brief → ship → delivery).
+**Last updated:** 2026-06-21 — **automatic lead sourcing BUILT (mock-first, committed + pushed).**
+The 9-task lead-sourcing plan is fully implemented via subagent-driven TDD: **263 tests green**,
+typecheck clean, `npm run demo` 0 dead-letter, **`compliance-reviewer` PASS** on the new gated
+side-effecting path. Earlier this session the first real outbound went live (two leads queued to
+the Instantly campaign; weekdays-only). The running `npm run worker` must be **restarted** to load
+changes. **Still unproven live:** (a) the inbound side (reply → poller → classifier → opportunity
+→ brief → ship → delivery) and (b) the real Google Places path — sourcing has only run in
+local/dry-run (mock Places). See "Automatic lead sourcing" below.
 
-### ▶ START HERE (next chat): build automatic lead sourcing
+### Automatic lead sourcing — BUILT (mock-first), 2026-06-21
 
-**The active build is automatic lead sourcing.** Read the spec
-`docs/superpowers/specs/2026-06-21-lead-sourcing-design.md` and execute the plan
-`docs/superpowers/plans/2026-06-21-lead-sourcing.md` **task-by-task** (9 TDD tasks; use
-executing-plans or subagent-driven-development). One-click batch sourcing by city + niche via
-Google Places API (New, `/v1` searchText), `ACTIVATE_NEW_LEAD_SOURCE`-gated, stops at a target
-(qualified = drafted email & score > 35) or a candidate cap (default 40); self-re-enqueuing
-`lead.source` controller + `SourcingRun` record; ~30 new niches via a single `NICHE_META`
-source of truth; no phone collected. Mock-first (suite stays green with zero keys); run
-`compliance-reviewer` at Task 9. Owner said: compact, then "keep building."
+**Done.** William sources qualified leads by city + niche from Google Places (New `/v1`
+searchText), one-click batch, `ACTIVATE_NEW_LEAD_SOURCE`-gated, stopping at a target
+(qualified = drafted email & score > 35) or a candidate cap (default 40). Self-re-enqueuing
+`lead.source` controller + `SourcingRun` record + a Source-leads dashboard page. ~30 niches via
+a single `NICHE_META` source of truth (in `@william/core`); no phone collected. Full detail in
+`CLAUDE.md` → "Done (Automatic lead sourcing)". Spec/plan:
+`docs/superpowers/{specs,plans}/2026-06-21-lead-sourcing*`. **263 tests green, typecheck clean,
+demo 0 dead-letter, `compliance-reviewer` PASS.**
 
-Other open threads (lower priority while sourcing is the focus):
+Notable: letting the dashboard import `@william/core` required de-Node-ifying the core barrel —
+`newId` now uses Web Crypto (same ULID format) and `loadDotEnv` dropped `node:fs` (try/catch
+around `process.loadEnvFile`). Both behavior-preserving (full suite + demo green).
+
+**▶ Lead sourcing — what's left (activation):** the real Google Places path has NEVER executed
+(local always dry-run → mock Places). Before the first real run in staging: set a real
+`GOOGLE_MAPS_API_KEY` (Places **New** v1 enabled), grant the `ACTIVATE_NEW_LEAD_SOURCE` approval,
+then **confirm the live `places:searchText` response shape** (`nextPageToken` field name +
+pagination termination) and **re-run `compliance-reviewer`** on the live path (compliance
+advisory I2). Sourced business strings must stay DATA.
+
+Other open threads:
 - **Watch Monday's sends + the reply path** — confirm a real reply flows through the poller →
   classifier → opportunity. First validation of the inbound side.
 - **Deeper email discovery** (mailto/JSON-LD priority + Cloudflare decode) for JS-rendered

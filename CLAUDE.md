@@ -594,6 +594,55 @@ dead-letter, dashboard builds, `compliance-reviewer` PASS on every sensitive del
 not given a fabricated `info@<domain>`. Wiring a real enrichment provider + a real
 deliverability verifier (today's "verify" only checks format) remains future work.
 
+### Done (Automatic lead sourcing — 263 tests green, compliance PASS)
+
+**Spec:** `docs/superpowers/specs/2026-06-21-lead-sourcing-design.md`. **Plan:**
+`docs/superpowers/plans/2026-06-21-lead-sourcing.md`. Built subagent-driven, TDD,
+mock-first — `npm test` 263 green, typecheck clean, `npm run demo` 0 dead-letter (sourcing
+dormant in the demo: no `GOOGLE_MAPS_API_KEY` → local dry-run → mock Places, no run
+enqueued). `compliance-reviewer` PASS on all targeted invariants.
+
+William now sources qualified leads automatically instead of the owner hand-entering each.
+
+- **Niche taxonomy + single source of truth.** Expanded `Niche` (5 → 38 + `other`) and a new
+  `NICHE_META: Record<Niche, {label, searchTerm, outreachHook}>` in `@william/core`
+  (`packages/core/src/niche.ts`) — `Record<Niche,…>` makes it exhaustive (a new niche won't
+  compile without metadata). `NICHE_HOOKS` (draft.ts) now derives from `NICHE_META`
+  (duplication removed); `nicheSearchQuery(niche, location)` builds the Places query.
+- **Real Google Places (New `/v1`) adapter** (`packages/integrations/src/real/places.ts`):
+  `POST /v1/places:searchText`, `X-Goog-Api-Key` + field mask that **deliberately omits phone**
+  (owner collects no phone; cheaper SKU); maps each place → `DiscoveredBusiness {…, phone:null}`;
+  returns `{ businesses, nextPageToken }` for pagination. `requireTicket` first (invariant 2),
+  **empty + zero-network under `ticket.dryRun`** (invariant 3), **fail-closed empty** on any HTTP
+  error. Selected by `GOOGLE_MAPS_API_KEY` presence; mock is the fallback (now paginated too).
+- **`SourcingRun` entity** (`packages/core/src/schema/sourcing.ts`) → `store.sourcingRuns` repo →
+  `sourcing-runs` collection whitelist → dashboard. Tracks `location/niche/target/candidateCap/
+  status/candidatesIngested/qualifiedCount/leadIds/nextPageToken/checks/resultNote`.
+- **Self-re-enqueuing `lead.source` controller** (`workers/orchestrator/src/sourcing.ts` +
+  `handleLeadSource`): per tick — recompute qualified (`countQualified`: has an `OutreachDraft`
+  AND latest `LeadScore.score > 35`), stop at target (`completed`) / candidate-cap
+  (`stopped_cap`) / Places-exhausted (`stopped_exhausted`) / check-cap (`failed`); else, if the
+  last page's leads are still pre-draft (`IN_FLIGHT_STATUSES` = `new/auditing/audited/scored/
+  contact_ready` — `draft_ready`+ are RESOLVED for sourcing, since a draft = counted and won't
+  auto-advance mid-run), wait+re-enqueue; else evaluate the gate and `ingestLead` up to the
+  remaining cap (duplicate/DNC-blocked intakes don't count), re-enqueue. Doubly loop-bounded
+  (`MAX_SOURCING_CHECKS` + no-op on non-`running`). Re-check delay + default cap (40) in
+  `RuntimeConfig.leadSourcing` (`LEAD_SOURCING_RECHECK_MS`/`LEAD_SOURCING_CANDIDATE_CAP`).
+- **API + gating + dashboard.** `POST /api/sourcing-runs {location,niche,target,candidateCap?}`
+  creates a run (`pending_approval`) + an `ACTIVATE_NEW_LEAD_SOURCE` approval (reuses the existing
+  `requestApproval` helper); `GET /api/sourcing-runs` lists. The decide route, **only on GRANT**,
+  sets the run `running` and enqueues `lead.source`. New **Source-leads** dashboard page (form +
+  runs list, niche dropdown from `NICHE_META`). `ACTIVATE_NEW_LEAD_SOURCE` is a pre-existing gate.
+- **Cross-cutting core fix (so the dashboard can import `@william/core`):** the barrel was not
+  browser-safe (Vite choked on `node:crypto`/`node:fs`). `newId` now uses
+  `globalThis.crypto.getRandomValues` (same ULID format) and `loadDotEnv` wraps
+  `process.loadEnvFile` in try/catch (no `node:fs`; missing `.env` = silent no-op, a present-but-
+  unreadable `.env` logs a warning). Both behavior-preserving (full suite + demo green).
+- **⚠️ Activation-time re-review owed (compliance advisory I2):** the real Places path has never
+  executed (still local/dry-run). Before the first real sourcing run in staging, confirm the live
+  `places:searchText` response shape (`nextPageToken` field name + that pagination terminates) and
+  re-run `compliance-reviewer` on the live text→data path (sourced business strings stay DATA).
+
 ### NEXT STEPS (staging rehearsal underway — real-path fixes landed)
 
 **Where we are (2026-06-21):** staging rehearsal is underway and **the first real
@@ -605,16 +654,18 @@ demo 0 dead-letter, `compliance-reviewer` 8/8 PASS on the outreach delta). The r
 worker must be restarted to pick up changes. **Still unproven live:** the inbound side —
 a real reply through the poller → classifier → opportunity → brief → ship → delivery.
 
-**🔨 ACTIVE BUILD — automatic lead sourcing (in progress).** Spec:
-`docs/superpowers/specs/2026-06-21-lead-sourcing-design.md`. Plan (9 TDD tasks):
-`docs/superpowers/plans/2026-06-21-lead-sourcing.md` (committed `5baad73`). One-click
-batch: source by city + niche via Google Places API (New, `/v1` searchText), gated by
-`ACTIVATE_NEW_LEAD_SOURCE`, stops at a target (qualified = drafted email & score > 35) or
-a candidate cap (default 40); self-re-enqueuing `lead.source` controller + `SourcingRun`
-record; expands the niche taxonomy (~30 profitable niches) via a single `NICHE_META`
-source of truth; no phone collected. **Execute the plan task-by-task** (executing-plans
-or subagent-driven-development); mock-first so the suite stays green with zero keys.
-Run `compliance-reviewer` at Task 9 (new gated side-effecting path).
+**✅ DONE — automatic lead sourcing (263 tests green, compliance PASS).** Spec:
+`docs/superpowers/specs/2026-06-21-lead-sourcing-design.md`; plan:
+`docs/superpowers/plans/2026-06-21-lead-sourcing.md`. Built via subagent-driven TDD,
+mock-first (suite + demo green with zero keys). Full summary in the "Done (automatic lead
+sourcing)" section below. One-click batch sources by city + niche via Google Places API
+(New, `/v1` searchText), gated by `ACTIVATE_NEW_LEAD_SOURCE`, stops at a target (qualified =
+drafted email & score > 35) or a candidate cap (default 40); self-re-enqueuing `lead.source`
+controller + `SourcingRun` record; ~30 niches via a single `NICHE_META` source of truth; no
+phone collected. **`compliance-reviewer` PASS (all invariants).** ⚠️ **Activation-time
+re-review still owed** (advisory I2): confirm the live `places:searchText` response shape
+(`nextPageToken` field name + pagination termination) in staging before the first real
+sourcing run — the real Places path has never executed (still local/dry-run).
 
 **What's working right now:** the full DRY-RUN pipeline end-to-end — intake → audit →
 **email gate/staged discovery** → score (**+ visual score when screenshots exist**) →
