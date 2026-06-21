@@ -1,17 +1,28 @@
 import type { Lead, LeadStatus } from "@william/core";
 import type { AppContext } from "./context";
 
-/** Statuses where a lead is still moving through audit→contact→score→draft. */
+/**
+ * Statuses where a lead is still moving through audit→contact→score→draft.
+ *
+ * A lead is in-flight ONLY while it is still being audited/scored/drafted.
+ * Once it reaches `draft_ready` it HAS a draft (its sourcing outcome is known)
+ * and will NOT advance further during a run — sending requires owner approval
+ * + a gated SEND_FIRST_TOUCH send, which does not happen mid-run. Counting
+ * `draft_ready` or `approved_for_send` as in-flight would cause the controller
+ * to wait forever on those leads and never source the next page, eventually
+ * exhausting its check cap and failing without ever reaching its target.
+ *
+ * Everything from `draft_ready` onward is resolved for sourcing purposes:
+ * either it has a draft (counted by countQualified), or it is terminal-negative
+ * (disqualified / not_interested / do_not_contact), or it is post-contact
+ * (contacted / replied / opportunity / customer).
+ */
 export const IN_FLIGHT_STATUSES: ReadonlySet<LeadStatus> = new Set<LeadStatus>([
   "new",
   "auditing",
   "audited",
   "scored",
   "contact_ready",
-  // draft_ready: draft created, awaiting owner approval (still pre-send)
-  // approved_for_send: approval granted but send job not yet processed
-  "draft_ready",
-  "approved_for_send",
 ]);
 
 /** A lead has exited the active pipeline (it resolved — successfully or not). */

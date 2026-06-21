@@ -312,6 +312,81 @@ describe("lead.source controller", () => {
     expect(after.candidatesIngested).toBe(1);
   });
 
+  it("sources a second page when page 1 alone does not meet the target (multi-page regression)", async () => {
+    // Regression guard for the IN_FLIGHT_STATUSES bug:
+    // When `draft_ready`/`approved_for_send` were counted as in-flight the controller
+    // would see the page-1 lead as "still flowing", re-enqueue indefinitely, exhaust
+    // its check cap, and end as `failed` — never sourcing page 2 and never completing.
+    // After the fix those statuses are resolved, the controller correctly sources the
+    // next page, and the run reaches `completed` with qualifiedCount >= target.
+    // Domain selection: the mock auditor synthesizes behaviour deterministically
+    // from seed = sum(charCodes(domain)) % 3:
+    //   bad=0  → rough site  → high lead score (well above 35) + email published
+    //   bad=1  → mediocre    → low lead score (~31, BELOW 35) + email published
+    //   bad=2  → decent site → NO email → disqualified before scoring
+    //
+    // Both domains must have bad=0 so they qualify for countQualified (score>35).
+    //   bb-coffee.example.com → seed=2022 → 2022%3=0 → bad=0 → email+high score
+    //   ee-coffee.example.com → seed=2031 → 2031%3=0 → bad=0 → email+high score
+    let callCount = 0;
+    ctx.integrations.places.searchBusinesses = async (_t, input) => {
+      callCount += 1;
+      if (!input.pageToken) {
+        // First call — page 1: one business, more pages available.
+        return {
+          businesses: [
+            {
+              name: "BB Coffee",
+              niche: "coffee_shop",
+              websiteUrl: "https://bb-coffee.example.com",
+              phone: null,
+              address: null,
+              city: "Ithaca",
+              rating: 4,
+            },
+          ],
+          nextPageToken: "P2",
+        };
+      } else if (input.pageToken === "P2") {
+        // Second call — page 2: a different business, no further pages.
+        return {
+          businesses: [
+            {
+              name: "EE Coffee",
+              niche: "coffee_shop",
+              websiteUrl: "https://ee-coffee.example.com",
+              phone: null,
+              address: null,
+              city: "Ithaca",
+              rating: 4,
+            },
+          ],
+          nextPageToken: null,
+        };
+      }
+      // Any further call returns empty.
+      return { businesses: [], nextPageToken: null };
+    };
+
+    // target=2 means we need BOTH pages to complete.
+    const run = approvedRun(ctx, 2, 40);
+    ctx.store.queue.enqueue({
+      type: "lead.source",
+      payload: { sourcingRunId: run.id },
+      traceId: run.traceId,
+    });
+
+    await runUntilEmpty(ctx, 500, futureClock);
+
+    const after = ctx.store.sourcingRuns.get(run.id)!;
+    // The run must complete (not fail or hang) and must have pulled both pages.
+    expect(after.status).toBe("completed");
+    expect(after.qualifiedCount).toBeGreaterThanOrEqual(2);
+    expect(after.candidatesIngested).toBeGreaterThanOrEqual(2);
+    // Confirm we actually fetched page 2 (i.e. sourcing advanced past page 1).
+    expect(callCount).toBeGreaterThanOrEqual(2);
+  });
+
   it("no-ops if the run is already completed when the job fires", async () => {
     const run = approvedRun(ctx, 1, 40);
     // Mark it completed before the job runs.
