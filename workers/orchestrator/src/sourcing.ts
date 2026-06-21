@@ -8,6 +8,10 @@ export const IN_FLIGHT_STATUSES: ReadonlySet<LeadStatus> = new Set<LeadStatus>([
   "audited",
   "scored",
   "contact_ready",
+  // draft_ready: draft created, awaiting owner approval (still pre-send)
+  // approved_for_send: approval granted but send job not yet processed
+  "draft_ready",
+  "approved_for_send",
 ]);
 
 /** A lead has exited the active pipeline (it resolved — successfully or not). */

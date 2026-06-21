@@ -8,6 +8,103 @@ import {
   type AppContext,
 } from "../src/index";
 
+// ─── Pre-seed helper ──────────────────────────────────────────────────────────
+
+/**
+ * Directly seed a Lead that already qualifies for `countQualified`:
+ *   - has an OutreachDraft (any status)
+ *   - has a LeadScore > 35
+ * Returns the leadId so the caller can pass it to approvedRun's leadIds.
+ * Uses direct store inserts to avoid queue-pollution from ingestLead.
+ */
+function seedQualifiedLead(ctx: AppContext): string {
+  const now = nowIso();
+  const companyId = newId("com");
+  const leadId = newId("lead");
+  const contactId = newId("con");
+
+  ctx.store.companies.insert({
+    id: companyId,
+    createdAt: now,
+    updatedAt: now,
+    name: "Qualified Test Biz",
+    identityKey: "company:qualified-test-biz:ithaca",
+    niche: "coffee_shop",
+    city: "Ithaca",
+    region: "NY",
+    country: "US",
+    phone: null,
+    address: null,
+    socialLinks: {},
+    description: "",
+  });
+
+  ctx.store.leads.insert({
+    id: leadId,
+    createdAt: now,
+    updatedAt: now,
+    companyId,
+    domain: "qualified-test.example.com",
+    websiteUrl: "https://qualified-test.example.com",
+    niche: "coffee_shop",
+    status: "draft_ready",
+    source: { kind: "google_maps", detail: "test", importedAt: now, importedBy: "system" },
+    identityKeys: [
+      "domain:qualified-test.example.com",
+      "company:qualified-test-biz:ithaca",
+    ],
+    notes: "",
+    disqualifiedReason: null,
+  });
+
+  ctx.store.contacts.insert({
+    id: contactId,
+    createdAt: now,
+    updatedAt: now,
+    leadId,
+    companyId,
+    name: null,
+    role: null,
+    email: "hello@qualified-test.example.com",
+    emailSource: "website_published",
+    emailProvider: null,
+    verification: "valid",
+    confidence: 0.9,
+    phone: null,
+  });
+
+  ctx.store.outreachDrafts.insert({
+    id: newId("odft"),
+    createdAt: now,
+    updatedAt: now,
+    leadId,
+    contactId,
+    variant: "v1-cornell-mockup",
+    subject: "Your website",
+    body: "Hi there. Reply to opt out.",
+    personalizationNotes: [],
+    auditFindingsUsed: [],
+    status: "pending_approval",
+    approvalRequestId: null,
+    sentAt: null,
+    traceId: newTraceId(),
+  });
+
+  ctx.store.leadScores.insert({
+    id: newId("scr"),
+    createdAt: now,
+    updatedAt: now,
+    leadId,
+    auditId: null,
+    score: 60, // well above the 35 threshold
+    tier: "warm",
+    reasons: ["pre-seeded for test"],
+    scoredAt: now,
+  });
+
+  return leadId;
+}
+
 // Fast-forward past retry backoff (mirrors pipeline.test.ts).
 const futureClock = () => new Date(Date.now() + 10 * 60_000);
 
@@ -234,5 +331,64 @@ describe("lead.source controller", () => {
 
     // Status must not have changed from completed.
     expect(ctx.store.sourcingRuns.get(run.id)!.status).toBe("completed");
+  });
+
+  it("deterministic completed path: pre-qualified lead → status=completed, qualifiedCount>=1", async () => {
+    // Pre-seed a lead that already satisfies countQualified (draft + score > 35).
+    // This test exercises the target-met branch WITHOUT relying on pipeline timing.
+    // It also guards Fix 1: before the stop() closure was fixed it spread the
+    // ORIGINAL run snapshot (qualifiedCount=0), so the terminal record would show
+    // qualifiedCount=0 and this assertion would fail.
+    const leadId = seedQualifiedLead(ctx);
+
+    const traceId = newTraceId();
+    const now = nowIso();
+
+    // Create the SourcingRun already referencing the pre-qualified lead.
+    const run = ctx.store.sourcingRuns.insert({
+      id: newId("src"),
+      createdAt: now,
+      updatedAt: now,
+      location: "Ithaca, NY",
+      niche: "coffee_shop",
+      target: 1,
+      candidateCap: 40,
+      status: "running",
+      candidatesIngested: 1, // the pre-seeded lead counts as ingested
+      qualifiedCount: 0,     // starts at 0; the controller re-counts on first tick
+      leadIds: [leadId],
+      nextPageToken: null,
+      checks: 0,
+      approvalRequestId: null,
+      resultNote: null,
+      traceId,
+    });
+
+    // Grant ACTIVATE_NEW_LEAD_SOURCE (required by evaluateGate inside the controller).
+    const approval = requestApproval(ctx, {
+      gate: "ACTIVATE_NEW_LEAD_SOURCE",
+      subjectType: "SourcingRun",
+      subjectId: run.id,
+      title: "Source leads (deterministic test)",
+      detail: "coffee_shop in Ithaca, NY",
+      traceId,
+    });
+    decideApproval(ctx, approval.id, "granted", "test");
+
+    ctx.store.queue.enqueue({
+      type: "lead.source",
+      payload: { sourcingRunId: run.id },
+      traceId,
+    });
+
+    // A single tick is sufficient: countQualified returns 1 >= target 1 → completed.
+    await runUntilEmpty(ctx, 10, futureClock);
+
+    const after = ctx.store.sourcingRuns.get(run.id)!;
+    // Must be completed (not stopped_exhausted or any other status).
+    expect(after.status).toBe("completed");
+    // qualifiedCount must reflect the re-counted value written by stop().
+    // Before Fix 1 this would be 0 (stale snapshot); after Fix 1 it is 1.
+    expect(after.qualifiedCount).toBeGreaterThanOrEqual(1);
   });
 });

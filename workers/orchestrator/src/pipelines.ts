@@ -1425,8 +1425,15 @@ const handleLeadSource: JobHandler = async (ctx, job) => {
       delayMs: ctx.config.leadSourcing.recheckDelayMs,
     });
 
-  const stop = (status: SourcingRunStatus, note: string) =>
-    ctx.store.sourcingRuns.save({ ...run, status, resultNote: note, updatedAt: nowIso() });
+  // NOTE: `stop` re-fetches from the store at call time so the terminal record
+  // always carries the freshest counters (qualifiedCount / checks /
+  // candidatesIngested / leadIds written by the save just above this closure).
+  // Spreading `run` (the original snapshot loaded at handler entry) would
+  // revert those increments in the persisted terminal record.
+  const stop = (status: SourcingRunStatus, note: string) => {
+    const fresh = ctx.store.sourcingRuns.get(run.id) ?? run;
+    ctx.store.sourcingRuns.save({ ...fresh, status, resultNote: note, updatedAt: nowIso() });
+  };
 
   // 1) Re-count qualified and increment the check counter.
   const qualifiedCount = countQualified(ctx, run.leadIds, QUALIFIED_MIN_SCORE);
