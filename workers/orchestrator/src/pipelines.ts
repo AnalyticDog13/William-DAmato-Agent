@@ -6,6 +6,7 @@ import {
   isPlaceholderEmail,
   newId,
   newTraceId,
+  nicheSearchQuery,
   normalizeDomain,
   normalizeEmail,
   nowIso,
@@ -20,6 +21,7 @@ import {
   type OutreachDraft,
   type SiteProject,
   type SourceProvenance,
+  type SourcingRunStatus,
   type VisualAssessment,
   type WebsiteAudit,
   type WebsiteBrief,
@@ -49,6 +51,7 @@ import { suggestCall } from "@william/worker-scheduling";
 import { requestApproval } from "./approvals";
 import { credentialFor, evaluateGate, localReadCredential, operationalTicket, type AppContext } from "./context";
 import { assignVariant, runningExperiment } from "./experiments";
+import { IN_FLIGHT_STATUSES, countQualified, leadResolved } from "./sourcing";
 
 // ─── Lead intake (synchronous entry point used by API, CSV import, seeds) ───
 
@@ -1393,6 +1396,126 @@ const handlePollReplies: JobHandler = async (ctx, job) => {
   ctx.log.info("instantly poll complete", { fetched: inbound.length, enqueued, traceId: job.traceId });
 };
 
+// ─── Lead sourcing controller ─────────────────────────────────────────────────
+
+const QUALIFIED_MIN_SCORE = 35;
+const MAX_SOURCING_CHECKS = 300;
+
+/**
+ * Self-re-enqueuing controller for automatic lead sourcing.
+ *
+ * Each invocation:
+ *   1. Re-counts qualified leads (draft + score > 35).
+ *   2. Stops if target met, candidate cap hit, or checks exceeded.
+ *   3. Waits (re-enqueues) if prior-page leads are still in-flight.
+ *   4. Pages Places for the next batch, ingests businesses, re-enqueues.
+ *
+ * Invariant 2: the Places call is gated behind ACTIVATE_NEW_LEAD_SOURCE.
+ * Invariant 3: local env → Places adapter returns [] (dry-run); no real calls.
+ */
+const handleLeadSource: JobHandler = async (ctx, job) => {
+  const run = ctx.store.sourcingRuns.get(job.payload.sourcingRunId as string);
+  if (!run || run.status !== "running") return;
+
+  const reEnqueue = () =>
+    ctx.store.queue.enqueue({
+      type: "lead.source",
+      payload: { sourcingRunId: run.id },
+      traceId: job.traceId,
+      delayMs: ctx.config.leadSourcing.recheckDelayMs,
+    });
+
+  const stop = (status: SourcingRunStatus, note: string) =>
+    ctx.store.sourcingRuns.save({ ...run, status, resultNote: note, updatedAt: nowIso() });
+
+  // 1) Re-count qualified and increment the check counter.
+  const qualifiedCount = countQualified(ctx, run.leadIds, QUALIFIED_MIN_SCORE);
+  const checks = run.checks + 1;
+  ctx.store.sourcingRuns.save({ ...run, qualifiedCount, checks, updatedAt: nowIso() });
+
+  // Reload so subsequent mutations are based on fresh state.
+  const updated = ctx.store.sourcingRuns.get(run.id)!;
+
+  // 2) Stop conditions (checked in priority order).
+  if (qualifiedCount >= run.target) {
+    stop("completed", `Found ${qualifiedCount} qualified lead(s).`);
+    return;
+  }
+  if (updated.candidatesIngested >= run.candidateCap) {
+    stop("stopped_cap", `Hit candidate cap (${run.candidateCap}) — found ${qualifiedCount} of ${run.target}.`);
+    return;
+  }
+  if (checks > MAX_SOURCING_CHECKS) {
+    stop("failed", `Stopped after ${checks} checks — found ${qualifiedCount} of ${run.target}.`);
+    return;
+  }
+
+  // 3) If prior-page leads are still flowing through the pipeline, wait.
+  const inFlight = updated.leadIds.some((id) => {
+    const l = ctx.store.leads.get(id);
+    return l ? !leadResolved(l) : false;
+  });
+  if (inFlight) {
+    reEnqueue();
+    return;
+  }
+
+  // 4) Source the next page from Places (gated).
+  const decision = evaluateGate(ctx, {
+    gate: "ACTIVATE_NEW_LEAD_SOURCE",
+    subjectType: "SourcingRun",
+    subjectId: run.id,
+    traceId: job.traceId,
+  });
+  if (!decision.allowed || !decision.ticket) {
+    stop("failed", `Lead-source gate denied: ${decision.reason}`);
+    return;
+  }
+
+  const page = await ctx.integrations.places.searchBusinesses(decision.ticket, {
+    query: nicheSearchQuery(run.niche, run.location),
+    location: run.location,
+    pageToken: updated.nextPageToken,
+  });
+
+  if (page.businesses.length === 0) {
+    stop("stopped_exhausted", `No more results — found ${qualifiedCount} of ${run.target}.`);
+    return;
+  }
+
+  // Ingest businesses up to the remaining capacity.
+  const remaining = run.candidateCap - updated.candidatesIngested;
+  const newLeadIds: string[] = [];
+  for (const biz of page.businesses.slice(0, remaining)) {
+    const result = ingestLead(ctx, {
+      companyName: biz.name,
+      websiteUrl: biz.websiteUrl,
+      niche: run.niche,
+      city: biz.city,
+      source: {
+        kind: "google_maps",
+        detail: `sourcing run ${run.id}`,
+        importedAt: nowIso(),
+        importedBy: "system",
+      },
+    });
+    // Only count genuinely new leads; duplicates / DNC-blocked ones don't count.
+    if (result.outcome === "created") newLeadIds.push(result.lead.id);
+  }
+
+  // Persist updated run state and re-enqueue for the next check cycle.
+  ctx.store.sourcingRuns.save({
+    ...updated,
+    leadIds: [...updated.leadIds, ...newLeadIds],
+    candidatesIngested: updated.candidatesIngested + newLeadIds.length,
+    nextPageToken: page.nextPageToken,
+    checks,
+    qualifiedCount,
+    updatedAt: nowIso(),
+  });
+  reEnqueue();
+};
+
 export const JOB_HANDLERS: Record<string, JobHandler> = {
   "lead.audit": handleAudit,
   "lead.score": handleScore,
@@ -1413,4 +1536,5 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   "billing.draft": handleBillingDraft,
   "billing.execute": handleBillingExecute,
   "ingest.transcript": handleTranscriptIngest,
+  "lead.source": handleLeadSource,
 };
