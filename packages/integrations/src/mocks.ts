@@ -138,12 +138,13 @@ export function createMockGithub(): GithubAdapter {
 export function createMockEnrichment(): EnrichmentAdapter {
   return {
     name: "mock-enrichment",
-    async findContacts(ticket, domain) {
+    async findContacts(ticket, _domain) {
       requireTicket(ticket, "enrichment.findContacts");
-      // Deterministic plausible guess so the demo pipeline has data to flow.
-      return [
-        { email: `info@${domain}`, name: null, role: "general inbox", confidence: 0.55, provider: "mock-enrichment" },
-      ];
+      // We never GUESS a contact (no info@<domain> fabrication): a lead with no
+      // real email found on the site is not contactable. Real enrichment data
+      // arrives only with a configured provider (ENRICHMENT_API_KEY) once a real
+      // adapter is wired; until then this returns nothing.
+      return [];
     },
     async verifyEmail(ticket, email) {
       requireTicket(ticket, "enrichment.verifyEmail");

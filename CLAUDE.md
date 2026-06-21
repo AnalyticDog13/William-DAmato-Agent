@@ -542,16 +542,69 @@ score bidirectionally, and each Anthropic call now runs on a **per-task model**
   scoring test was deleted. Robots is **still respected upstream** — the audit
   aborts and writes a compliance event — so honoring it is unchanged.
 
-### NEXT STEPS (feature merged to `main`; staging rehearsal is next)
+### Done (Staging rehearsal session — real-path fixes, 235 tests green)
 
-**Where we are (2026-06-19):** the visual-scoring + email-only-gate + per-task-model
-feature is **merged to `main` and pushed** (`origin/main` @ `69b6d82`); the
-`william-business-head` branch was deleted after merge (its full 50-commit history
-lives in `main` — nothing lost). The owner has **updated `.env`**. Everything passes
-**mock-first** (227 tests, typecheck clean, `npm run demo` end-to-end with zero keys)
-— but **`local` forces dry-run** (invariant 3), so the new **real** paths (the Haiku
-vision call + the Playwright email crawl) have **not yet executed for real**. Doing
-that is the next job.
+**Where:** first run with `WILLIAM_ENV=staging` + `DRY_RUN=false` + `AUDITOR_MODE=playwright`
+— the real paths executed for the first time (real Chromium audit, Sonnet/Haiku vision
+call, email crawl). **All changes below are UNCOMMITTED on `main`; restart `npm run
+worker` to load them.** Suite **235 green**, typecheck clean, `npm run demo` 0
+dead-letter, dashboard builds, `compliance-reviewer` PASS on every sensitive delta
+(credential wiring 8/8; outreach+audit; email gate 8/8).
+
+- **Operational-ticket credential wiring (load-bearing).** Every operational
+  read/generation ticket was minted WITHOUT a credential, so `computeDryRun` forced
+  dry-run even on staging (`cred === "missing"`) and visual scoring / email crawl /
+  scrape / outreach-copy / classify / build-prompt all silently simulated. New
+  `credentialFor(ctx, integration)` + `localReadCredential(ctx)` in `context.ts`; ~11
+  `operationalTicket(...)` sites in `pipelines.ts` now pass the matching credential
+  (anthropic/firecrawl/instantly/enrichment/email_verify/calendar; the local email
+  crawl uses an env-derived sandbox/live). Invariant 3 intact — local still forced
+  dry-run, a missing credential still simulates. **This is what makes staging actually
+  exercise the real paths.**
+- **Crawl performance (per-lead time).** `crawlForEmail` was `networkidle` + 20s/page ×
+  8 pages ≈ 160s on a site that never settles (a real coffee-shop site). Now `domcontentloaded`
+  + per-page timeout + overall wall-clock budget, both config-driven:
+  `emailDiscovery.pageTimeoutMs` (`EMAIL_DISCOVERY_PAGE_TIMEOUT_MS`, default 8000) and
+  `budgetMs` (`EMAIL_DISCOVERY_BUDGET_MS`, default 25000); `maxPages` default 8→6.
+- **Audit settle-before-capture.** The Playwright audit screenshotted immediately after
+  `load`, so a late/lazy hero image was missed and fed a FALSE "no image" claim into the
+  email. Now a bounded `networkidle` (8s cap) + 800ms settle runs BEFORE screenshot +
+  content; `loadMs` is measured off the load event FIRST, so the "slow load" finding
+  stays truthful.
+- **Outreach plain-language.** `OUTREACH_SYSTEM` now bans web-design jargon (`hero`,
+  `above the fold`, `CTA`, `viewport`, `LCP`, …) and requires plain words a
+  non-technical owner understands. Opt-out / Cornell / mockup / length rules unchanged.
+- **Score reachability fixed.** `scoreLead` gained a `{ reachableEmail? }` option;
+  `handleScore` passes the RESOLVED contact's email presence, so a crawl/enrichment-found
+  email no longer gets the −10 "no email" penalty (it was HTML-only before).
+- **Email filter is DOMAIN-based.** `isPlaceholderEmail` keeps common prefixes on real
+  domains (`info@<real-domain>`, `contact@`, `team@`) and rejects only fake/template
+  DOMAINS (expanded `PLACEHOLDER_DOMAINS`: info.com, contact.com, test.com, sample.com,
+  your-domain.com, mysite.com, website.com, company.com, business.com, …). `handleContact`
+  now judges an enrichment email by `isPlaceholderEmail`, NOT by its source (removed a
+  wrong "disqualify all enrichment in live" gate).
+- **Dashboard.** Leads page gained an **Email** column — leads with a pending first-touch
+  draft show the email inline with **Approve & send / Reject** (same gated
+  `/approvals/:id/decide`). LeadDetail gained a **Contact** panel (email + source +
+  verification + confidence) so the owner can judge a guessed address before approving.
+
+⚠️ **Enrichment no longer guesses** (updated 2026-06-20): `createMockEnrichment` returns
+`[]` and the rung is consulted only when a real provider is configured
+(`ENRICHMENT_API_KEY`). A lead with no real email from homepage + crawl is disqualified,
+not given a fabricated `info@<domain>`. Wiring a real enrichment provider + a real
+deliverability verifier (today's "verify" only checks format) remains future work.
+
+### NEXT STEPS (staging rehearsal underway — real-path fixes landed)
+
+**Where we are (2026-06-20):** staging rehearsal has STARTED — `WILLIAM_ENV=staging`,
+`DRY_RUN=false`, `AUDITOR_MODE=playwright` are set and the real paths have executed for
+the first time (real Chromium audit + screenshots, Sonnet/Haiku vision score, email
+crawl). The "Done (Staging rehearsal session …)" fixes above landed (credential wiring,
+crawl perf, audit settle, plain-language outreach, score reachability, domain-based
+email filter, dashboard Email column + Contact panel). **All of it is UNCOMMITTED on
+`main`** (235 tests green, typecheck clean, demo 0 dead-letter) — commit + push is
+pending owner sign-off, and the running worker must be restarted to pick it up. No
+outbound has happened yet (no real send, payment, or prod deploy).
 
 **What's working right now:** the full DRY-RUN pipeline end-to-end — intake → audit →
 **email gate/staged discovery** → score (**+ visual score when screenshots exist**) →
@@ -560,10 +613,57 @@ delivery. Adapters pick real-vs-mock by credential presence; the dashboard rende
 visual assessment; the policy/compliance suite is green. **Nothing outbound has
 happened yet** (no real send, scrape, vision call, crawl, or payment).
 
-1. **STAGING REHEARSAL — the load-bearing switch is `WILLIAM_ENV=staging`** (local can
-   never go live — invariant 3). Do it in this order:
+**✅ DONE (owner-reported, 2026-06-21) — placeholder blacklist + Lighthouse-gated slow claim
++ no-URL outreach.** Uncommitted on `main`; 242 tests green, typecheck clean, demo 0
+dead-letter.
+  - **Placeholder-domain blacklist expanded** (`packages/core/src/email.ts`): a real lead's
+    Shopify-template `…@mystore.com` was approved as a contact (it shadowed the real address
+    because `mystore.com` wasn't blacklisted and `firstRealEmail` returns the first
+    non-placeholder). Added `mystore.com` + a curated set of theme/CMS/store-builder demo
+    domains; real providers/custom domains deliberately excluded. **Still owed:** deeper
+    email discovery (mailto/JSON-LD priority + Cloudflare-obfuscation decode) for
+    JS-rendered sites where the real address isn't in the static text.
+  - **Slow-load claim is Lighthouse-gated:** the raw `load`-event time overstated perceived
+    speed, so fast sites were called slow in outreach. `deriveFindings` no longer emits a
+    `loadMs`-based outreach claim (internal weakness only, >6s); new `lighthouseSlowAngle`
+    adds the plain-language slow angle **only when Lighthouse confirms** (perf < 50), wired
+    into `handleScore` after the deferred Lighthouse run.
+  - **No URL in pre-reply outreach:** stripped `williamdamato.com` + the prospect-domain
+    parenthetical from first-touch/follow-up templates; `OUTREACH_SYSTEM` forbids links and
+    no longer receives the prospect URL; `validateDraft` rejects a URL in any non-delivery
+    draft (the delivery email still carries the live link — the site is revealed only after
+    the prospect engages). **Outreach content changed → `compliance-reviewer` owed before
+    the next send.**
+
+**✅ DONE (owner-specified, 2026-06-20) — dropped the `info@<domain>` guess; don't analyze
+un-emailable leads.** Uncommitted on `main`; 236 tests green, typecheck clean, demo 0
+dead-letter. Two linked changes:
+  - **No more `info@<domain>` guessing.** `createMockEnrichment.findContacts` no longer
+    fabricates `info@<domain>` (returns `[]`), and `handleContact` consults the enrichment
+    rung **only when a real provider is configured** (`credentialFor(ctx, "enrichment")`).
+    A lead with no REAL email from the **homepage pass + Playwright crawl** is **not
+    contactable → disqualified** (record KEPT) and raises the enrichment-provider
+    OwnerRequest (invariant 6). A configured provider's found contact is still validated by
+    domain (`isPlaceholderEmail`) + the verify step. This supersedes the "keep
+    `info@<real-domain>` enrichment guess" behavior from the staging-rehearsal session.
+  - **Lighthouse deferred → only runs for emailable leads.** The Playwright audit now
+    **skips Lighthouse** (new `skipLighthouse` on `auditWebsite`/`playwrightAudit`); it
+    runs in `handleScore` via the new `runDeferredLighthouse` (own short-lived Chromium),
+    which only executes after `handleContact` resolves an email. So an un-emailable lead
+    incurs **neither** Lighthouse **nor** the visual review (`llm.scoreVisualDesign` was
+    already gated by pipeline order — `lead.score` is enqueued only after a contact is
+    found). Playwright mode only; mock synthesizes scores and http never had them, both
+    decided at audit time as before. `scoreLead` consumes the merged `audit.lighthouse`.
+  - **Still owed:** `compliance-reviewer` on the live text→/image→prompt behavior before
+    the first outbound send (the change is conservative — fewer addresses, never guessed —
+    but the review is still mandatory at activation).
+
+The remaining staging → activation sequence:
+
+1. **STAGING REHEARSAL — `WILLIAM_ENV=staging` is now SET and the real paths are live**
+   (local can never go live — invariant 3). Continue in this order:
    - **(a) Local sanity first, zero side effects:** `npm run typecheck`, `npm test`
-     (expect **227 green**), `npm run demo`, and boot `npm run worker` to confirm it
+     (expect **236 green**), `npm run demo`, and boot `npm run worker` to confirm it
      reads the updated `.env` cleanly. Still dry-run — this just proves the `.env`
      edits broke nothing.
    - **(b) Staging, SAFE read/generation paths FIRST** (no outbound, no payment): set

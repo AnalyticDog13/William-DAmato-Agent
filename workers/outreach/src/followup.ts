@@ -123,7 +123,6 @@ export function createFollowUpDraft(input: FollowUpDraftInput): OutreachDraft {
           "",
           `Best,`,
           `Will`,
-          `williamdamato.com`,
           "",
           OPT_OUT_LINE,
         ].join("\n")
@@ -136,7 +135,6 @@ export function createFollowUpDraft(input: FollowUpDraftInput): OutreachDraft {
           "",
           `Best,`,
           `Will`,
-          `williamdamato.com`,
           "",
           OPT_OUT_LINE,
         ].join("\n");

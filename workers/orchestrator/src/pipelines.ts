@@ -3,6 +3,7 @@ import {
   companyIdentityKey,
   firstRealEmail,
   identityKeys,
+  isPlaceholderEmail,
   newId,
   newTraceId,
   normalizeDomain,
@@ -26,7 +27,7 @@ import {
 import type { CompanyScrapeHints, ExecutionResult, OutreachCopyRequest } from "@william/integrations";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { auditWebsite, crawlForEmail, launchChromium, qualityCheckPreview } from "@william/worker-site-auditor";
+import { auditWebsite, crawlForEmail, launchChromium, lighthouseSlowAngle, qualityCheckPreview, runDeferredLighthouse } from "@william/worker-site-auditor";
 import {
   DELIVERY_VARIANT,
   MAX_TOUCHES,
@@ -46,7 +47,7 @@ import { applyRevisionOverrides, buildPreviewSite } from "@william/worker-site-b
 import { createInvoiceDraft, executeInvoiceDraft } from "@william/worker-billing";
 import { suggestCall } from "@william/worker-scheduling";
 import { requestApproval } from "./approvals";
-import { evaluateGate, operationalTicket, type AppContext } from "./context";
+import { credentialFor, evaluateGate, localReadCredential, operationalTicket, type AppContext } from "./context";
 import { assignVariant, runningExperiment } from "./experiments";
 
 // ─── Lead intake (synchronous entry point used by API, CSV import, seeds) ───
@@ -185,6 +186,10 @@ const handleAudit: JobHandler = async (ctx, job) => {
     ticket,
     dataDir: ctx.config.dataDir,
     launchBrowser: ctx.browserLauncher,
+    // Defer Lighthouse to the score step (after a contactable email is resolved)
+    // so we never run it on a lead we can't email. Only affects playwright mode;
+    // mock/http decide their lighthouse at audit time as before.
+    skipLighthouse: true,
   });
   ctx.store.audits.insert(audit);
   if (audit.robotsAllowed === false) {
@@ -200,8 +205,34 @@ const handleAudit: JobHandler = async (ctx, job) => {
 
 const handleScore: JobHandler = async (ctx, job) => {
   const lead = getLead(ctx, job);
-  const audit = ctx.store.audits.get(job.payload.auditId as string);
+  let audit = ctx.store.audits.get(job.payload.auditId as string);
   if (!audit) throw new Error(`Audit ${job.payload.auditId} not found`);
+
+  // Deferred Lighthouse. The audit skips Lighthouse (the expensive part) and we
+  // run it HERE — handleScore only runs for leads that resolved a contactable
+  // email (handleContact disqualifies and returns early otherwise), so an
+  // un-emailable lead never incurs a Lighthouse run. Playwright mode only:
+  // mock synthesizes scores and http never had them, both decided at audit time.
+  // Robots was already honored upstream (a playwright audit only exists when the
+  // crawl was allowed). Failure/no-browser ⇒ null ⇒ deterministic scoring.
+  if (audit.mode === "playwright" && audit.url) {
+    const lighthouse = await runDeferredLighthouse(audit.url, {
+      log: ctx.log,
+      launchBrowser: ctx.browserLauncher ?? launchChromium,
+    });
+    if (lighthouse) {
+      audit = { ...audit, lighthouse };
+      // Only NOW — with a real, throttled-mobile performance score — may we add
+      // the "slow site" outreach claim. lighthouseSlowAngle returns null unless
+      // Lighthouse confirms it, so a fast-painting site is never called slow.
+      const slowAngle = lighthouseSlowAngle(lighthouse);
+      if (slowAngle && !audit.outreachAngles.includes(slowAngle)) {
+        audit = { ...audit, outreachAngles: [...audit.outreachAngles, slowAngle] };
+      }
+      ctx.store.audits.save(audit);
+      ctx.store.writeActivity(lead.id, "lighthouse_scored", `Lighthouse perf ${lighthouse.performance ?? "n/a"}, a11y ${lighthouse.accessibility ?? "n/a"}, seo ${lighthouse.seo ?? "n/a"}${slowAngle ? " — confirmed slow" : ""}`, { traceId: job.traceId });
+    }
+  }
 
   // Visual qualification — only when screenshots exist (playwright mode). Read the
   // PNGs, base64-encode, and ask the vision model. Null (mock/http/dry-run/failure)
@@ -212,7 +243,7 @@ const handleScore: JobHandler = async (ctx, job) => {
   if (paths.length > 0) {
     try {
       const images = paths.map((p) => ({ mediaType: "image/png" as const, dataBase64: readFileSync(p).toString("base64") }));
-      const ticket = operationalTicket(ctx, "llm.scoreVisualDesign", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId);
+      const ticket = operationalTicket(ctx, "llm.scoreVisualDesign", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId, credentialFor(ctx, "anthropic"));
       visual = await ctx.integrations.llm.scoreVisualDesign(ticket, {
         companyName: ctx.store.companies.get(lead.companyId)?.name ?? lead.domain ?? "the business",
         niche: lead.niche,
@@ -227,7 +258,12 @@ const handleScore: JobHandler = async (ctx, job) => {
       ctx.log.warn("visual scoring failed; scoring deterministically", { leadId: lead.id, error: err instanceof Error ? err.message : String(err) });
     }
   }
-  const result = scoreLead(audit, visual, ctx.config.visualScoring);
+  // Reachability reflects the RESOLVED contact (homepage pass + Playwright crawl
+  // + any real enrichment), not just the audit's HTML emails — so a crawl-found
+  // email isn't penalized. handleContact runs before handleScore and disqualifies
+  // (returning early) when no email is found, so a scored lead normally has one.
+  const scoredContact = ctx.store.contacts.list({ leadId: lead.id })[0];
+  const result = scoreLead(audit, visual, ctx.config.visualScoring, { reachableEmail: !!scoredContact?.email });
   const now = nowIso();
   ctx.store.leadScores.insert({
     id: newId("scr"),
@@ -273,41 +309,27 @@ const handleContact: JobHandler = async (ctx, job) => {
     // 2) Playwright escalation — only on a miss. The operational ticket governs
     //    dry-run: in local it's a dry-run ticket, so crawlForEmail simulates and
     //    returns empty (no browser launch, zero network).
+    // `localReadCredential` returns sandbox/live unconditionally; that is safe
+    //    ONLY because computeDryRun forces dry-run when env === "local" BEFORE
+    //    the credential is consulted (invariant 3), so local can never crawl live.
     if (!resolvedEmail && lead.websiteUrl) {
-      const crawlTicket = operationalTicket(ctx, "site_audit.crawl", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId);
+      const crawlTicket = operationalTicket(ctx, "site_audit.crawl", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId, localReadCredential(ctx));
       const crawl = await crawlForEmail(lead, {
         log: ctx.log,
         ticket: crawlTicket,
         launchBrowser: ctx.browserLauncher ?? launchChromium,
         subpaths: ctx.config.emailDiscovery.subpaths,
         maxPages: ctx.config.emailDiscovery.maxPages,
+        pageTimeoutMs: ctx.config.emailDiscovery.pageTimeoutMs,
+        budgetMs: ctx.config.emailDiscovery.budgetMs,
       });
       if (crawl.email) { resolvedEmail = crawl.email; source = "website_crawled"; foundOn = crawl.foundOn ?? null; }
     }
 
-    // 3) Enrichment provider fallback.
-    if (!resolvedEmail && lead.domain) {
-      const enrichTicket = operationalTicket(ctx, "enrichment.findContacts", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId);
-      const best = (await ctx.integrations.enrichment.findContacts(enrichTicket, lead.domain))[0];
-      if (best) {
-        const now = nowIso();
-        contact = ctx.store.contacts.insert({
-          id: newId("con"),
-          createdAt: now,
-          updatedAt: now,
-          leadId: lead.id,
-          companyId: lead.companyId,
-          name: best.name,
-          role: best.role,
-          email: best.email,
-          emailSource: "enrichment",
-          emailProvider: best.provider,
-          verification: "unverified",
-          confidence: best.confidence,
-          phone: null,
-        });
-      }
-    } else if (resolvedEmail) {
+    // 3) An email resolved from the website (homepage pass or crawl) becomes the
+    //    contact. We never GUESS an address (no info@<domain> fabrication): a lead
+    //    with no real email found on its site is simply not contactable.
+    if (resolvedEmail) {
       const now = nowIso();
       contact = ctx.store.contacts.insert({
         id: newId("con"),
@@ -325,6 +347,33 @@ const handleContact: JobHandler = async (ctx, job) => {
         phone: audit?.extracted.phones[0] ?? null,
       });
       if (foundOn) ctx.store.writeActivity(lead.id, "contact_found", `Email ${resolvedEmail} found by crawl on ${foundOn}`, { traceId: job.traceId });
+    } else if (lead.domain && credentialFor(ctx, "enrichment")) {
+      // 4) Enrichment provider — ONLY when a real provider is configured
+      //    (ENRICHMENT_API_KEY). This is NOT a guess: a configured provider
+      //    returns real, found contacts. Its result is still validated by
+      //    `isPlaceholderEmail` (a template/placeholder domain is rejected) and
+      //    by the verify step below. With no provider configured this rung is
+      //    skipped entirely, so the lead falls through to disqualified.
+      const enrichTicket = operationalTicket(ctx, "enrichment.findContacts", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId, credentialFor(ctx, "enrichment"));
+      const best = (await ctx.integrations.enrichment.findContacts(enrichTicket, lead.domain))[0];
+      if (best && !isPlaceholderEmail(best.email)) {
+        const now = nowIso();
+        contact = ctx.store.contacts.insert({
+          id: newId("con"),
+          createdAt: now,
+          updatedAt: now,
+          leadId: lead.id,
+          companyId: lead.companyId,
+          name: best.name,
+          role: best.role,
+          email: best.email,
+          emailSource: "enrichment",
+          emailProvider: best.provider,
+          verification: "unverified",
+          confidence: best.confidence,
+          phone: null,
+        });
+      }
     }
   }
 
@@ -343,7 +392,7 @@ const handleContact: JobHandler = async (ctx, job) => {
   }
 
   // 4) Verify before outreach.
-  const ticket = operationalTicket(ctx, "enrichment.verifyEmail", { type: "Contact", id: contact.id, leadId: lead.id }, job.traceId);
+  const ticket = operationalTicket(ctx, "enrichment.verifyEmail", { type: "Contact", id: contact.id, leadId: lead.id }, job.traceId, credentialFor(ctx, "email_verify"));
   const verdict = await ctx.integrations.enrichment.verifyEmail(ticket, contact.email);
   contact = ctx.store.contacts.save({
     ...contact,
@@ -383,7 +432,7 @@ async function applyOpusCopy(
   req: Omit<OutreachCopyRequest, "variant">,
   traceId: string,
 ): Promise<OutreachDraft> {
-  const ticket = operationalTicket(ctx, "llm.generateOutreachCopy", { type: "OutreachDraft", id: base.id, leadId: base.leadId }, traceId);
+  const ticket = operationalTicket(ctx, "llm.generateOutreachCopy", { type: "OutreachDraft", id: base.id, leadId: base.leadId }, traceId, credentialFor(ctx, "anthropic"));
   const copy = await ctx.integrations.llm.generateOutreachCopy(ticket, { ...req, variant: base.variant });
   if (!copy) return base;
   let body = copy.body.trim();
@@ -688,7 +737,7 @@ const handleReply: JobHandler = async (ctx, job) => {
   // reply text enters the prompt strictly as quoted data to label (invariant 1);
   // the ticket below is only minted when the assist actually runs.
   const classification = await classifyReplyAssisted(text, async (replyText) => {
-    const ticket = operationalTicket(ctx, "llm.classifyReply", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId);
+    const ticket = operationalTicket(ctx, "llm.classifyReply", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId, credentialFor(ctx, "anthropic"));
     return ctx.integrations.llm.classifyReply(ticket, { text: replyText });
   });
 
@@ -725,7 +774,7 @@ const handleReply: JobHandler = async (ctx, job) => {
   if (classification.intent !== "auto_reply") {
     const sync = ctx.store.campaignSyncs.list({ leadId: lead.id })[0];
     if (sync?.externalLeadId) {
-      const ticket = operationalTicket(ctx, "instantly.pauseLead", { type: "CampaignSync", id: sync.id, leadId: lead.id }, job.traceId);
+      const ticket = operationalTicket(ctx, "instantly.pauseLead", { type: "CampaignSync", id: sync.id, leadId: lead.id }, job.traceId, credentialFor(ctx, "instantly"));
       await ctx.integrations.instantly.pauseLead(ticket, sync.externalLeadId);
       ctx.store.campaignSyncs.save({ ...sync, status: "paused" });
     }
@@ -773,7 +822,7 @@ const handleReply: JobHandler = async (ctx, job) => {
       setLeadStatus(ctx, lead, "opportunity");
       // Owner is notified IMMEDIATELY; William never schedules anything itself.
       ctx.store.writeActivity(lead.id, "owner_notification", `🔥 POSITIVE REPLY — review thread and next steps. ${nextStep}`, { traceId: job.traceId });
-      const ticket = operationalTicket(ctx, "calendar.freeBusy", { type: "Opportunity", id: opportunity.id, leadId: lead.id }, job.traceId);
+      const ticket = operationalTicket(ctx, "calendar.freeBusy", { type: "Opportunity", id: opportunity.id, leadId: lead.id }, job.traceId, credentialFor(ctx, "calendar"));
       const suggestion = await suggestCall(lead, "Positive reply — discovery call recommended", ctx.integrations.calendar, ticket, opportunity.id);
       ctx.store.callSuggestions.insert(suggestion);
       // Business head (default): generate a build brief for the owner. With the
@@ -894,10 +943,10 @@ const handleBriefGenerate: JobHandler = async (ctx, job) => {
     about: company.description || undefined,
   };
 
-  const scrapeTicket = operationalTicket(ctx, "firecrawl.scrapeCompany", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId);
+  const scrapeTicket = operationalTicket(ctx, "firecrawl.scrapeCompany", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId, credentialFor(ctx, "firecrawl"));
   const companyFacts = await ctx.integrations.firecrawl.scrapeCompany(scrapeTicket, lead.websiteUrl ?? "", hints);
 
-  const llmTicket = operationalTicket(ctx, "llm.generateBuildPrompt", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId);
+  const llmTicket = operationalTicket(ctx, "llm.generateBuildPrompt", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId, credentialFor(ctx, "anthropic"));
   const result = await ctx.integrations.llm.generateBuildPrompt(llmTicket, {
     companyName: company.name,
     niche: company.niche,
@@ -1291,7 +1340,7 @@ const handleTranscriptIngest: JobHandler = async (ctx, job) => {
   // prompt strictly as quoted data (invariant 1). The mock and the real adapter
   // under dry-run (always local) return null, so local falls back to the
   // deterministic keyword extractor — behavior unchanged with no key.
-  const ticket = operationalTicket(ctx, "llm.extractTranscriptInsights", { type: "Transcript", id: source, leadId: null }, job.traceId);
+  const ticket = operationalTicket(ctx, "llm.extractTranscriptInsights", { type: "Transcript", id: source, leadId: null }, job.traceId, credentialFor(ctx, "anthropic"));
   const insights =
     (await ctx.integrations.llm.extractTranscriptInsights(ticket, { source, text })) ??
     (await ctx.integrations.transcripts.extractInsights({ source, text }));
@@ -1324,7 +1373,7 @@ const handleTranscriptIngest: JobHandler = async (ctx, job) => {
  * prior reply.process has run before the next poll job).
  */
 const handlePollReplies: JobHandler = async (ctx, job) => {
-  const ticket = operationalTicket(ctx, "instantly.pollInbound", { type: "InboundPoll", id: "instantly", leadId: null }, job.traceId);
+  const ticket = operationalTicket(ctx, "instantly.pollInbound", { type: "InboundPoll", id: "instantly", leadId: null }, job.traceId, credentialFor(ctx, "instantly"));
   const inbound = await ctx.integrations.instantly.pollInbound(ticket, { limit: 100 });
   let enqueued = 0;
   for (const msg of inbound) {

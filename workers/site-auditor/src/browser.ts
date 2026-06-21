@@ -8,6 +8,10 @@ import type { Logger } from "@william/core";
 export interface MinimalPage {
   url(): string;
   goto(url: string, opts?: { waitUntil?: "load" | "domcontentloaded" | "networkidle"; timeout?: number }): Promise<unknown>;
+  /** Optional in the structural type so injected fakes need not implement it;
+   * real Playwright provides both. Used to let lazy/async imagery settle. */
+  waitForLoadState?(state: "load" | "domcontentloaded" | "networkidle", opts?: { timeout?: number }): Promise<unknown>;
+  waitForTimeout?(ms: number): Promise<unknown>;
   title(): Promise<string>;
   content(): Promise<string>;
   setViewportSize(size: { width: number; height: number }): Promise<void>;

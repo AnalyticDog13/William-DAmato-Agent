@@ -13,6 +13,14 @@ export interface PlaywrightAuditDeps {
   dataDir: string;
   launchBrowser: ChromiumLauncher;
   lighthouseRunner?: LighthouseRunner;
+  /**
+   * Skip the (expensive) Lighthouse run during the audit. The orchestrator sets
+   * this so Lighthouse is DEFERRED to the score step, which only runs for leads
+   * that resolved a contactable email — no point paying for Lighthouse on a lead
+   * we can't email. When true, `lighthouse` is left null; run it later via
+   * `runDeferredLighthouse`.
+   */
+  skipLighthouse?: boolean;
 }
 
 const DESKTOP_VIEWPORT = { width: 1366, height: 900 };
@@ -38,6 +46,18 @@ export async function playwrightAudit(
     const started = Date.now();
     await page.goto(url, { waitUntil: "load", timeout: 30_000 });
     const loadMs = Date.now() - started;
+    // Let lazy-loaded / slow / JS-injected imagery settle BEFORE we screenshot
+    // and read content, so the capture + extracted signals reflect what a real
+    // visitor sees (avoids a false "no hero image" when it loads a few seconds
+    // late). Bounded so a site with persistent connections can't hang the audit.
+    // `loadMs` is already measured off the load event, so the "slow load"
+    // finding stays based on real load time, not this settle wait.
+    try {
+      await page.waitForLoadState?.("networkidle", { timeout: 8_000 });
+    } catch {
+      /* networkidle never reached (persistent connection) — proceed with what's painted */
+    }
+    await page.waitForTimeout?.(800); // final settle for fade-in / late paint
     const title = await page.title();
     const html = await page.content();
     const finalUrl = page.url() || url;
@@ -51,7 +71,9 @@ export async function playwrightAudit(
     await page.screenshot({ path: mobileScreenshotPath, fullPage: false });
 
     const a11yFindings = await runAxe(page, deps.log);
-    const lighthouse = await (deps.lighthouseRunner ?? runLighthouse)(finalUrl, cdpPort, deps.log);
+    const lighthouse = deps.skipLighthouse
+      ? null
+      : await (deps.lighthouseRunner ?? runLighthouse)(finalUrl, cdpPort, deps.log);
 
     const signals = extractSignals({ html, url: finalUrl, loadMs });
     const { weaknesses, outreachAngles, auditScore } = deriveFindings(signals, loadMs);
@@ -140,6 +162,32 @@ export const runLighthouse: LighthouseRunner = async (url, port, log) => {
     return null;
   }
 };
+
+/**
+ * Runs Lighthouse against a live URL on its own short-lived Chromium — used to
+ * DEFER the audit's Lighthouse run until after a contactable email is resolved
+ * (so un-emailable leads never incur it). Launches Chromium with a CDP port and
+ * points Lighthouse at it (Lighthouse drives its own navigation, exactly as in
+ * the inline audit). Returns null when no browser is available or on failure, so
+ * the caller scores deterministically — never throws, never blocks the pipeline.
+ * The caller is responsible for the robots.txt check (the audit already did it).
+ */
+export async function runDeferredLighthouse(
+  url: string,
+  deps: { log: Logger; launchBrowser: ChromiumLauncher; lighthouseRunner?: LighthouseRunner },
+): Promise<WebsiteAudit["lighthouse"]> {
+  const cdpPort = await freePort();
+  const browser = await deps.launchBrowser(deps.log, { args: [`--remote-debugging-port=${cdpPort}`] });
+  if (!browser) return null;
+  try {
+    return await (deps.lighthouseRunner ?? runLighthouse)(url, cdpPort, deps.log);
+  } catch (err) {
+    deps.log.warn("Deferred Lighthouse run failed", { error: err instanceof Error ? err.message : String(err) });
+    return null;
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
 
 /** Fallback when no config is provided; runtime values come from RuntimeConfig.previewQuality. */
 export const PREVIEW_QUALITY_THRESHOLDS = {

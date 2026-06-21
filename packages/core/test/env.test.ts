@@ -48,8 +48,10 @@ describe("loadConfig flags", () => {
   it("defaults visualScoring and emailDiscovery", () => {
     const cfg = loadConfig({ WILLIAM_ENV: "local" } as NodeJS.ProcessEnv);
     expect(cfg.visualScoring).toEqual({ weight: 0.5, promoteMinConfidence: 0.7, demoteMinConfidence: 0.7 });
-    expect(cfg.emailDiscovery.maxPages).toBe(8);
+    expect(cfg.emailDiscovery.maxPages).toBe(6);
     expect(cfg.emailDiscovery.subpaths).toContain("/contact");
+    expect(cfg.emailDiscovery.pageTimeoutMs).toBe(8_000);
+    expect(cfg.emailDiscovery.budgetMs).toBe(25_000);
   });
 
   it("parses + clamps visualScoring and parses subpaths", () => {

@@ -27,6 +27,7 @@ export function scoreLead(
   audit: WebsiteAudit,
   visual?: VisualAssessment | null,
   visualConfig: { weight: number; promoteMinConfidence: number; demoteMinConfidence: number } = VISUAL_DEFAULTS,
+  opts?: { reachableEmail?: boolean },
 ): ScoreResult {
   let score = 0;
   const reasons: string[] = [];
@@ -56,10 +57,13 @@ export function scoreLead(
     if (audit.extracted.trustSignals.length === 0) add(4, "No trust signals (reviews, testimonials).");
   }
 
-  // Reachability: outreach is email-only, so only a published/known EMAIL counts.
-  const reachable = audit.extracted.contactEmails.length > 0;
-  if (reachable) add(10, "Published contact email found — reachable for email outreach.");
-  else add(-10, "No published email — needs discovery/enrichment before outreach.");
+  // Reachability: outreach is email-only. Prefer the RESOLVED contact (which
+  // reflects the homepage pass AND the Playwright crawl) over HTML-only emails,
+  // so a lead whose email was found by the crawl is not wrongly penalized.
+  // Falls back to the audit's HTML emails when the caller doesn't pass a result.
+  const reachable = opts?.reachableEmail ?? audit.extracted.contactEmails.length > 0;
+  if (reachable) add(10, "Contact email found — reachable for email outreach.");
+  else add(-10, "No email found — needs discovery/enrichment before outreach.");
 
   let deterministic = Math.max(0, Math.min(100, score));
   let final = deterministic;

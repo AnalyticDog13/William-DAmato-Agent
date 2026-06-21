@@ -44,8 +44,10 @@ export interface RuntimeConfig {
   instantlyPollIntervalMs: number;
   /** Visual-scoring blend weight (0=ignore visual,1=visual only) + override confidence floors. */
   visualScoring: { weight: number; promoteMinConfidence: number; demoteMinConfidence: number };
-  /** Staged email discovery: subpaths the Playwright fallback crawls, capped by maxPages. */
-  emailDiscovery: { subpaths: string[]; maxPages: number };
+  /** Staged email discovery: subpaths the Playwright fallback crawls, capped by
+   *  maxPages, a per-page navigation timeout, and an overall wall-clock budget
+   *  so a slow site can never blow the per-lead time. */
+  emailDiscovery: { subpaths: string[]; maxPages: number; pageTimeoutMs: number; budgetMs: number };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -72,6 +74,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
   const subpaths = (env.EMAIL_DISCOVERY_SUBPATHS ?? "")
     .split(",").map((s) => s.trim()).filter(Boolean);
   const maxPagesRaw = Number(env.EMAIL_DISCOVERY_MAX_PAGES);
+  const posInt = (raw: string | undefined, fallback: number): number => {
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+  };
   return {
     env: williamEnv,
     dryRun,
@@ -98,7 +104,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
     },
     emailDiscovery: {
       subpaths: subpaths.length > 0 ? subpaths : DEFAULT_SUBPATHS,
-      maxPages: Number.isFinite(maxPagesRaw) && maxPagesRaw > 0 ? Math.floor(maxPagesRaw) : 8,
+      maxPages: Number.isFinite(maxPagesRaw) && maxPagesRaw > 0 ? Math.floor(maxPagesRaw) : 6,
+      pageTimeoutMs: posInt(env.EMAIL_DISCOVERY_PAGE_TIMEOUT_MS, 8_000),
+      budgetMs: posInt(env.EMAIL_DISCOVERY_BUDGET_MS, 25_000),
     },
   };
 }

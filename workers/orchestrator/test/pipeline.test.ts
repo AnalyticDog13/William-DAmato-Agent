@@ -1076,4 +1076,169 @@ describe("visual scoring in handleScore (task 9)", () => {
     // A LeadScore was still produced by the deterministic path.
     expect(ctx.store.leadScores.list({ leadId: l.id }).length).toBe(scoresBefore + 1);
   });
+
+  // --- Operational-ticket credential wiring (staging dry-run gate) ----------
+  // Regression (found in the first real staging run): handleScore minted the
+  // visual-scoring ticket with NO credential, so `computeDryRun` forced dry-run
+  // even on staging (cred "missing" ⇒ simulate) and the real Anthropic adapter
+  // always returned null. The ticket must now carry the anthropic credential so
+  // the vision call runs live when env+creds permit — while a MISSING credential
+  // STILL forces dry-run (invariant 3: no creds ⇒ simulate, never live).
+  function pointAtScreenshot(audit: ReturnType<typeof ctx.store.audits.get> & object) {
+    const dir = mkdtempSync(join(tmpdir(), "william-cred-"));
+    tempDirs.push(dir);
+    const shot = join(dir, "desktop.png");
+    writeFileSync(shot, TINY_PNG);
+    const page0 = audit.pages[0] ?? { url: audit.url ?? "https://x", title: null, loadMs: null, issues: [] };
+    ctx.store.audits.save({
+      ...audit,
+      pages: [{ ...page0, screenshotPath: shot, mobileScreenshotPath: null }, ...audit.pages.slice(1)],
+    });
+  }
+
+  function setCredential(integration: string, mode: "missing" | "sandbox" | "live") {
+    const existing = ctx.store.credentialStatuses.findByKey(`integration:${integration}`)[0];
+    if (existing) {
+      ctx.store.credentialStatuses.save({ ...existing, mode });
+      return;
+    }
+    const now = nowIso();
+    ctx.store.credentialStatuses.insert({
+      id: newId("cred"),
+      createdAt: now,
+      updatedAt: now,
+      integration: integration as "anthropic",
+      mode,
+      healthy: mode !== "missing",
+      lastCheckedAt: now,
+      detail: "test",
+    });
+  }
+
+  it("wires the anthropic credential into the visual-scoring ticket → runs live on staging", async () => {
+    const { lead: l, audit } = await leadAndAudit("Cred Wired Barbers");
+    pointAtScreenshot(audit);
+    ctx.config.env = "staging";
+    ctx.config.dryRun = false;
+    setCredential("anthropic", "sandbox");
+
+    let seenDryRun: boolean | null = null;
+    ctx.integrations.llm.scoreVisualDesign = async (ticket) => {
+      seenDryRun = ticket.dryRun;
+      return { visualOpportunityScore: 80, verdict: "weak", confidence: 0.9, findings: [], positives: [], model: "stub" };
+    };
+    await runScore(l.id, audit.id);
+
+    // Credential present + staging ⇒ the ticket is LIVE (the real adapter would
+    // hit the network). Before the fix this was `true` and the call no-op'd.
+    expect(seenDryRun).toBe(false);
+    expect(ctx.store.audits.get(audit.id)!.visualAssessment?.verdict).toBe("weak");
+  });
+
+  it("keeps the visual-scoring ticket dry-run when the anthropic credential is missing (invariant 3)", async () => {
+    const { lead: l, audit } = await leadAndAudit("No Cred Barbers");
+    pointAtScreenshot(audit);
+    ctx.config.env = "staging";
+    ctx.config.dryRun = false;
+    setCredential("anthropic", "missing");
+
+    let seenDryRun: boolean | null = null;
+    ctx.integrations.llm.scoreVisualDesign = async (ticket) => {
+      seenDryRun = ticket.dryRun;
+      return null; // mirror the real adapter's dry-run early return
+    };
+    await runScore(l.id, audit.id);
+
+    // No credential ⇒ forced dry-run, even on staging with DRY_RUN=false.
+    expect(seenDryRun).toBe(true);
+  });
+});
+
+// We never GUESS an email (no info@<domain> fabrication). A lead whose email
+// can't be found on its own site (homepage pass + crawl) is not contactable and
+// is disqualified — UNLESS a real enrichment provider is configured, in which
+// case its found result is used (still validated by domain + verification).
+describe("email gate: no real email → disqualified (no info@ guessing)", () => {
+  function noEmailAudit(leadId: string, url: string) {
+    const now = nowIso();
+    return ctx.store.audits.insert({
+      id: newId("aud"), createdAt: now, updatedAt: now, leadId,
+      url, mode: "mock", robotsAllowed: true,
+      hasWebsite: true, hasSsl: true, mobileFriendly: true, pages: [],
+      lighthouse: { performance: 70, accessibility: 70, bestPractices: 70, seo: 70 },
+      a11yFindings: [],
+      extracted: { contactEmails: [], phones: [], socialLinks: {}, ctas: [], services: [], trustSignals: [] },
+      weaknesses: [], outreachAngles: [], summary: "no published email", auditScore: 50,
+      completedAt: now, visualAssessment: null,
+    });
+  }
+
+  async function runContact(leadId: string, auditId: string) {
+    const { JOB_HANDLERS } = await import("../src/pipelines");
+    const now = nowIso();
+    const job = {
+      id: newId("job"), type: "lead.contact", payload: { leadId, auditId },
+      status: "running" as const, traceId: newTraceId(), leadId,
+      runAt: now, attempts: 0, maxAttempts: 3, lastError: null, createdAt: now, updatedAt: now,
+    };
+    return JOB_HANDLERS["lead.contact"]!(ctx, job);
+  }
+
+  function configureEnrichment(mode: "sandbox" | "live") {
+    const existing = ctx.store.credentialStatuses.findByKey("integration:enrichment")[0];
+    const now = nowIso();
+    if (existing) {
+      ctx.store.credentialStatuses.save({ ...existing, mode });
+      return;
+    }
+    ctx.store.credentialStatuses.insert({
+      id: newId("cred"), createdAt: now, updatedAt: now,
+      integration: "enrichment" as "anthropic", mode, healthy: true, lastCheckedAt: now, detail: "test",
+    });
+  }
+
+  it("disqualifies a no-email lead with no enrichment provider — never guesses info@<domain>", async () => {
+    ingestLead(ctx, lead("No Email Biz", "https://danbi-like.com"));
+    const l = ctx.store.leads.list()[0]!;
+    const audit = noEmailAudit(l.id, "https://danbi-like.com");
+    ctx.browserLauncher = async () => null; // crawl finds nothing
+    await runContact(l.id, audit.id);
+    // No info@danbi-like.com fabricated; lead kept but disqualified.
+    expect(ctx.store.contacts.list({ leadId: l.id }).length).toBe(0);
+    const lead_ = ctx.store.leads.get(l.id)!;
+    expect(lead_.status).toBe("disqualified");
+    expect(lead_.disqualifiedReason).toMatch(/no contactable email/i);
+    expect(ctx.store.leads.get(l.id)).toBeDefined(); // record KEPT
+  });
+
+  it("uses a configured enrichment provider's real contact (validated by domain)", async () => {
+    ingestLead(ctx, lead("Enriched Biz", "https://danbi-like.com"));
+    const l = ctx.store.leads.list()[0]!;
+    const audit = noEmailAudit(l.id, "https://danbi-like.com");
+    ctx.browserLauncher = async () => null;
+    configureEnrichment("sandbox");
+    ctx.integrations.enrichment.findContacts = async () => [
+      { email: "owner@danbi-like.com", name: "Dan", role: "owner", confidence: 0.8, provider: "stub" },
+    ];
+    await runContact(l.id, audit.id);
+    const contacts = ctx.store.contacts.list({ leadId: l.id });
+    expect(contacts.length).toBe(1);
+    expect(contacts[0]!.email).toBe("owner@danbi-like.com");
+    expect(contacts[0]!.emailSource).toBe("enrichment");
+    expect(ctx.store.leads.get(l.id)!.status).not.toBe("disqualified");
+  });
+
+  it("rejects a configured provider's placeholder-domain address → disqualified", async () => {
+    ingestLead(ctx, lead("Placeholder Biz", "https://example.com"));
+    const l = ctx.store.leads.list()[0]!;
+    const audit = noEmailAudit(l.id, "https://example.com");
+    ctx.browserLauncher = async () => null;
+    configureEnrichment("sandbox");
+    ctx.integrations.enrichment.findContacts = async () => [
+      { email: "info@example.com", name: null, role: null, confidence: 0.5, provider: "stub" },
+    ];
+    await runContact(l.id, audit.id);
+    expect(ctx.store.contacts.list({ leadId: l.id }).length).toBe(0);
+    expect(ctx.store.leads.get(l.id)!.status).toBe("disqualified");
+  });
 });

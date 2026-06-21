@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createLogger, nowIso, type Lead, type PolicyTicket } from "@william/core";
 import { auditWebsite } from "../src/audit";
+import { lighthouseSlowAngle } from "../src/heuristics";
 import { qualityCheckPreview } from "../src/playwright-audit";
 import type { MinimalBrowser, MinimalPage } from "../src/browser";
 
@@ -109,6 +110,19 @@ describe("playwright auditor mode", () => {
     });
     expect(audit.robotsAllowed).toBe(false);
     expect(launched).toBe(false);
+  });
+});
+
+describe("lighthouseSlowAngle (Lighthouse-gated slow claim)", () => {
+  it("returns a plain-language slow angle ONLY when Lighthouse confirms (perf < 50)", () => {
+    expect(lighthouseSlowAngle({ performance: 30, accessibility: 80, bestPractices: 80, seo: 80 })).toMatch(/slow to load/i);
+    expect(lighthouseSlowAngle({ performance: 49, accessibility: 80, bestPractices: 80, seo: 80 })).toMatch(/slow to load/i);
+  });
+  it("returns null for a fast or unknown site (never claims slow without proof)", () => {
+    expect(lighthouseSlowAngle({ performance: 50, accessibility: 80, bestPractices: 80, seo: 80 })).toBeNull();
+    expect(lighthouseSlowAngle({ performance: 95, accessibility: 80, bestPractices: 80, seo: 80 })).toBeNull();
+    expect(lighthouseSlowAngle({ performance: null, accessibility: 80, bestPractices: 80, seo: 80 })).toBeNull();
+    expect(lighthouseSlowAngle(null)).toBeNull();
   });
 });
 

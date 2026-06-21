@@ -12,6 +12,18 @@ interface Lead {
   companyId: string;
 }
 
+// Pending email approval (gate SEND_FIRST_TOUCH covers first-touch, follow-ups,
+// and delivery). `detail` is "Subject: …\n\n<body>" — the full email, so the
+// owner can read and approve it inline without leaving the Leads page.
+interface Approval {
+  id: string;
+  gate: string;
+  title: string;
+  detail: string;
+  leadId: string | null;
+  createdAt: string;
+}
+
 const STATUS_COLOR: Record<string, string> = {
   opportunity: "green",
   customer: "green",
@@ -24,6 +36,8 @@ const STATUS_COLOR: Record<string, string> = {
 
 export function LeadsPage() {
   const [items, setItems] = useState<Lead[]>([]);
+  const [emailApprovals, setEmailApprovals] = useState<Record<string, Approval>>({});
+  const [busy, setBusy] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [form, setForm] = useState({ companyName: "", websiteUrl: "", niche: "barbershop", city: "", email: "" });
@@ -34,8 +48,29 @@ export function LeadsPage() {
     if (search) params.set("search", search);
     if (status) params.set("status", status);
     api<{ items: Lead[] }>(`/api/collections/leads?${params}`).then((r) => setItems(r.items));
+    // Pending email approvals, keyed by lead → render inline below.
+    api<{ items: Approval[] }>("/api/review-queue").then((r) => {
+      const byLead: Record<string, Approval> = {};
+      for (const a of r.items) {
+        if (a.gate === "SEND_FIRST_TOUCH" && a.leadId && !byLead[a.leadId]) byLead[a.leadId] = a;
+      }
+      setEmailApprovals(byLead);
+    });
   }, [search, status]);
   useEffect(refresh, [refresh]);
+
+  // Approve/reject the email right here. Granting routes through the SAME
+  // /api/approvals/:id/decide endpoint as the Review Queue — the policy gate and
+  // send screening are unchanged; this is only a second place to click it.
+  const decide = async (id: string, decision: "granted" | "rejected") => {
+    setBusy(id);
+    try {
+      await api(`/api/approvals/${id}/decide`, { method: "POST", body: JSON.stringify({ decision, note: "" }) });
+      refresh();
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const addLead = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,19 +121,40 @@ export function LeadsPage() {
       <div className="panel">
         <table>
           <thead>
-            <tr><th>Lead</th><th>Niche</th><th>Status</th><th>Source</th><th>Created</th></tr>
+            <tr><th>Lead</th><th>Niche</th><th>Status</th><th>Email</th><th>Source</th><th>Created</th></tr>
           </thead>
           <tbody>
-            {items.map((l) => (
-              <tr key={l.id}>
-                <td><Link to={`/leads/${l.id}`}>{l.domain ?? l.id}</Link></td>
-                <td>{l.niche}</td>
-                <td><span className={`badge ${STATUS_COLOR[l.status] ?? ""}`}>{l.status}</span></td>
-                <td>{l.source.kind} <span className="mono">{l.source.detail}</span></td>
-                <td>{new Date(l.createdAt).toLocaleDateString()}</td>
-              </tr>
-            ))}
-            {items.length === 0 && <tr><td colSpan={5} className="empty">No leads yet — add one above or POST /api/demo/seed.</td></tr>}
+            {items.map((l) => {
+              const approval = emailApprovals[l.id];
+              return (
+                <tr key={l.id}>
+                  <td><Link to={`/leads/${l.id}`}>{l.domain ?? l.id}</Link></td>
+                  <td>{l.niche}</td>
+                  <td><span className={`badge ${STATUS_COLOR[l.status] ?? ""}`}>{l.status}</span></td>
+                  <td>
+                    {approval ? (
+                      <details>
+                        <summary><span className="badge amber">email ready</span> review &amp; approve</summary>
+                        <pre className="report" style={{ whiteSpace: "pre-wrap" }}>{approval.detail}</pre>
+                        <div className="toolbar" style={{ marginTop: 8 }}>
+                          <button className="approve" disabled={busy === approval.id} onClick={() => decide(approval.id, "granted")}>
+                            Approve &amp; send
+                          </button>
+                          <button className="reject" disabled={busy === approval.id} onClick={() => decide(approval.id, "rejected")}>
+                            Reject
+                          </button>
+                        </div>
+                      </details>
+                    ) : (
+                      <span className="sub">—</span>
+                    )}
+                  </td>
+                  <td>{l.source.kind} <span className="mono">{l.source.detail}</span></td>
+                  <td>{new Date(l.createdAt).toLocaleDateString()}</td>
+                </tr>
+              );
+            })}
+            {items.length === 0 && <tr><td colSpan={6} className="empty">No leads yet — add one above or POST /api/demo/seed.</td></tr>}
           </tbody>
         </table>
       </div>

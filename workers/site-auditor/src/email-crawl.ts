@@ -11,6 +11,11 @@ export interface EmailCrawlDeps {
   fetchImpl?: typeof fetch;
   subpaths: string[];
   maxPages: number;
+  /** Per-page navigation timeout (ms). */
+  pageTimeoutMs: number;
+  /** Overall wall-clock budget (ms) for the whole crawl — stops early so one
+   *  slow site can't blow the per-lead time. */
+  budgetMs: number;
 }
 
 /**
@@ -43,9 +48,19 @@ export async function crawlForEmail(
 
   try {
     const page = await browser.newPage();
+    const startedAt = Date.now();
     for (const url of urls) {
+      // Overall budget guard: a site that never settles (a real lead's site hit
+      // the timeout on every page) must not blow the per-lead time. Stop early.
+      if (Date.now() - startedAt > deps.budgetMs) {
+        deps.log.warn("email-crawl budget exceeded; stopping", { leadId: lead.id, elapsedMs: Date.now() - startedAt });
+        break;
+      }
       try {
-        await page.goto(url, { waitUntil: "networkidle", timeout: 20_000 });
+        // domcontentloaded (not networkidle): the DOM is parsed and contact text
+        // is readable, but we don't wait on analytics/sockets that keep a site
+        // from ever reaching network-idle. Far faster, bounded per page.
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: deps.pageTimeoutMs });
         const html = await page.content();
         const innerText = await page.evaluate<string>(
           () => (globalThis as unknown as { document?: { body?: { innerText?: string } } }).document?.body?.innerText ?? "",

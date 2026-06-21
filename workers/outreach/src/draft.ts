@@ -59,11 +59,14 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
   const angles = audit.outreachAngles.slice(0, 2);
   const findingLine =
     angles.length > 0
-      ? `I took a look at ${audit.hasWebsite ? `your site (${lead.domain})` : `your online presence`} and noticed ${formatAngles(angles)}.`
+      ? `I took a look at ${audit.hasWebsite ? `your site` : `your online presence`} and noticed ${formatAngles(angles)}.`
       : `I took a quick look at how ${company.name} shows up online and think there's real room to win more customers.`;
 
+  // No link in the first touch — we tease that the mockup is already built and
+  // only share the actual website once they reply (the delivery email carries
+  // the live URL). validateDraft enforces the no-URL rule for non-delivery copy.
   const mockupOffer = `I've already built a free mockup of what a faster, mobile-friendly site for ${company.name} could look like — happy to send it over, no strings attached. If you like it, great; if not, you keep the ideas.`;
-  const signOff = [`Worth a look?`, "", `Best,`, `Will`, `williamdamato.com`, "", OPT_OUT_LINE];
+  const signOff = [`Worth a look?`, "", `Best,`, `Will`, "", OPT_OUT_LINE];
 
   let subject: string;
   let body: string;
@@ -181,6 +184,15 @@ function formatAngles(angles: string[]): string {
   return `${angles[0]} — and ${angles[1]}`;
 }
 
+/**
+ * Detects a website link/URL in copy: an explicit http(s):// or www. prefix, or
+ * a bare `word.tld` token on a common TLD. Used to keep links OUT of pre-reply
+ * outreach. (Email addresses are not URLs; the pre-reply templates contain none,
+ * and the delivery email — which legitimately carries the live link — is exempt
+ * via its variant.)
+ */
+const URL_IN_COPY_RE = /(https?:\/\/|www\.[a-z0-9-]|\b[a-z0-9-]+\.(?:com|net|org|io|co|shop|store|app|dev|biz|us|cafe|site|online|xyz)\b)/i;
+
 /** Hard rules a draft must satisfy before it may even be queued for approval. */
 export function validateDraft(draft: OutreachDraft): string[] {
   const problems: string[] = [];
@@ -189,5 +201,11 @@ export function validateDraft(draft: OutreachDraft): string[] {
   if (!/mockup/i.test(draft.body)) problems.push("missing free-mockup offer");
   if (draft.body.length > 1200) problems.push(`too long (${draft.body.length} chars; keep it short)`);
   if (draft.subject.length > 70) problems.push("subject too long");
+  // Pre-reply outreach (first-touch + follow-ups) must NOT contain a link — the
+  // mockup/website is revealed only after the prospect engages. The delivery
+  // email is the one place a URL belongs, so it is exempt.
+  if (draft.variant !== DELIVERY_VARIANT && URL_IN_COPY_RE.test(draft.body)) {
+    problems.push("must not include a link/URL (the website is shared only after they reply)");
+  }
   return problems;
 }

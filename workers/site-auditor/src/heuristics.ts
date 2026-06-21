@@ -103,13 +103,38 @@ export function deriveFindings(signals: ExtractedSignals, loadMs: number | null)
   if (signals.imageCount > 0 && signals.imagesMissingAlt / signals.imageCount > 0.5) {
     weaknesses.push({ category: "accessibility", detail: `${signals.imagesMissingAlt}/${signals.imageCount} images missing alt text.`, severity: "low" });
   }
-  if (loadMs != null && loadMs > 4000) {
-    weaknesses.push({ category: "performance", detail: `Homepage took ${(loadMs / 1000).toFixed(1)}s to load.`, severity: "high" });
-    angles.push(`their homepage takes ${(loadMs / 1000).toFixed(1)} seconds to load`);
+  // Load timing is recorded as an INTERNAL weakness only — the raw `load` event
+  // overstates perceived speed (it waits on every third-party pixel, lazy image,
+  // chat widget, etc.), so a site that paints fast can show a slow `load`. We do
+  // NOT turn it into a customer-facing outreach claim here. The "slow site"
+  // outreach angle is added later, ONLY when Lighthouse confirms it
+  // (see `lighthouseSlowAngle` + handleScore) — never from this number alone.
+  if (loadMs != null && loadMs > 6000) {
+    weaknesses.push({ category: "performance", detail: `Homepage 'load' event took ${(loadMs / 1000).toFixed(1)}s (full resource load; not necessarily perceived speed).`, severity: "medium" });
   }
 
   // Audit score reflects how GOOD the site is (100 = excellent).
   let score = 100;
   for (const w of weaknesses) score -= w.severity === "high" ? 18 : w.severity === "medium" ? 10 : 4;
   return { weaknesses, outreachAngles: angles.slice(0, 4), auditScore: Math.max(0, score) };
+}
+
+/**
+ * Lighthouse performance score below which we are willing to TELL a prospect
+ * their site is slow. Lighthouse runs a throttled mobile profile, so this is a
+ * defensible, real-world "slow" — unlike the raw `load`-event time. < 50 is
+ * Lighthouse's own "poor" (red) band.
+ */
+export const SLOW_PERFORMANCE_SCORE = 50;
+
+/**
+ * The truthful, plain-language "slow site" outreach angle — but ONLY when
+ * Lighthouse confirms the site is genuinely slow. Returns null otherwise, so we
+ * never claim a fast-painting site is slow just because its `load` event was
+ * long. Plain wording (no jargon) per the outreach style rules.
+ */
+export function lighthouseSlowAngle(lighthouse: WebsiteAudit["lighthouse"]): string | null {
+  const perf = lighthouse?.performance;
+  if (perf == null || perf >= SLOW_PERFORMANCE_SCORE) return null;
+  return "their website is slow to load on a typical phone, which can lose impatient visitors";
 }

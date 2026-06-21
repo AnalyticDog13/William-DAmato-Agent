@@ -130,3 +130,29 @@ export function operationalTicket(
     credential,
   });
 }
+
+/**
+ * Credential param for an operational ticket, resolved by integration name from
+ * the credential-status store. Returns null when the credential is
+ * absent/missing, so the engine forces dry-run and a provider without a key
+ * keeps simulating (invariant 3). Pass the result as `operationalTicket(...)`'s
+ * fifth argument for any read/generation adapter call that should run live once
+ * env + credentials permit (the LLM, Firecrawl, Instantly, enrichment paths).
+ */
+export function credentialFor(
+  ctx: AppContext,
+  integration: string,
+): { mode: "sandbox" | "live" } | null {
+  const cred = ctx.store.credentialStatuses.findByKey(`integration:${integration}`)[0];
+  return cred && cred.mode !== "missing" ? { mode: cred.mode } : null;
+}
+
+/**
+ * Credential for a local read-only operation that has no external API key — the
+ * Playwright email crawl. Authorized to run live in any non-local env; the
+ * engine still forces dry-run when env === "local" (invariant 3 keeps local a
+ * pure dry-run regardless of this value).
+ */
+export function localReadCredential(ctx: AppContext): { mode: "sandbox" | "live" } {
+  return { mode: ctx.config.env === "production" ? "live" : "sandbox" };
+}

@@ -7,31 +7,112 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-19 — the VISUAL SCORING + EMAIL-ONLY GATE + per-task-model
-feature is **merged to `main` and pushed** (`origin/main` @ `69b6d82`); the
-`william-business-head` branch was **deleted** after merge (its full 50-commit history
-is preserved in `main`). The owner has **updated `.env`**.
+**Last updated:** 2026-06-20 — **staging rehearsal has STARTED.** `WILLIAM_ENV=staging`,
+`DRY_RUN=false`, `AUDITOR_MODE=playwright` are set and the real paths executed for the
+first time (real Chromium audit + screenshots, Sonnet/Haiku vision score, email crawl).
+A batch of real-path fixes landed this session (see "Staging rehearsal session" below
+and the matching section in `CLAUDE.md`). **All of it is UNCOMMITTED on `main`** — 235
+tests green, typecheck clean, `npm run demo` 0 dead-letter, dashboard builds,
+`compliance-reviewer` PASS on every sensitive delta. Commit/push awaits owner sign-off;
+the running `npm run worker` must be **restarted** to load the changes.
 
-### ▶ START HERE (next chat): test the real paths via staging
+### ▶ START HERE (next chat): continue the staging rehearsal
 
-Everything is **mock-first green** (227 tests, typecheck clean, `npm run demo`), but
-`local` forces dry-run (invariant 3) — so the new **real** paths (the Haiku vision
-score + the Playwright email crawl) have **not run for real yet**. Sequence (full
-detail in `CLAUDE.md` → "NEXT STEPS"):
+The previous IMMEDIATE step — **drop the `info@<domain>` guess + don't analyze
+un-emailable leads** — is **DONE** (2026-06-20, uncommitted on `main`, 236 tests green,
+typecheck clean, demo 0 dead-letter). See "No-guess email gate + deferred Lighthouse"
+below. Next up:
 
-1. **Local sanity, no side effects:** `npm run typecheck`, `npm test` (expect 227),
-   `npm run demo`, boot `npm run worker` — confirms the updated `.env` broke nothing.
-2. **Staging, SAFE reads first:** `WILLIAM_ENV=staging` **+ `AUDITOR_MODE=playwright`**
-   (required for screenshots; `npx playwright install chromium` if needed) + grant the
-   policy-gate approvals in the dashboard. On a real lead with a website, verify
-   `llm.scoreVisualDesign` (sane `VisualAssessment` + sensible promote/demote) and
-   `crawlForEmail` (finds a subpage email / gate disqualifies email-less, robots
-   respected), plus Firecrawl scrape + Anthropic build-prompt/reply-classify.
-3. **MANDATORY:** re-run `compliance-reviewer` on the live text→prompt **and**
-   image→prompt behavior (now includes the vision call + live crawled page content)
-   **before the first live send**.
-4. Only then enable gated side-effects (Instantly sends, Stripe, prod deploys), then
-   work the "⚠️ Before going LIVE" checklist for production.
+- **Re-run `compliance-reviewer`** on the live text→/image→prompt behavior (mandatory
+  before the first live send — covers screenshots-as-untrusted-DATA vision call + live
+  crawled page content). This change is conservative (we now contact FEWER addresses,
+  never a guessed one) but a review pass is still owed before going outbound.
+- Continue the staging rehearsal to the gated side-effects, then the "⚠️ Before going
+  LIVE" checklist.
+
+### Email blacklist + Lighthouse-gated slow claim + no-URL outreach — 2026-06-21 (uncommitted on `main`)
+
+Owner-reported fixes (mock-first, 242 tests green, typecheck clean, demo 0 dead-letter):
+
+1. **Placeholder-domain blacklist expanded** (`packages/core/src/email.ts`). A real lead's
+   Shopify-template `…@mystore.com` was being approved as a contact because `mystore.com`
+   wasn't blacklisted, and `firstRealEmail` returns the first non-placeholder — so the fake
+   shadowed the real address. Added `mystore.com` + a curated set of theme/CMS/store-builder
+   demo domains (`yourstore.com`, `yourcompany.com`, `companyname.com`, `demo.com`,
+   `acme.com`, `mailinator.com`, …). Real providers/custom domains are deliberately NOT
+   listed. **Deeper email-discovery work still owed** (the real address on a JS-rendered or
+   Cloudflare-obfuscated site is still missed — mailto/JSON-LD priority + Cloudflare decode
+   is a good follow-up).
+2. **Slow-load claim is now Lighthouse-gated** (your 3+4). The raw `load`-event time
+   overstates perceived speed (waits on every pixel/lazy image/widget), so fast sites were
+   called slow in outreach. `deriveFindings` no longer turns `loadMs` into an outreach claim
+   (kept only as an internal weakness at >6s); the new `lighthouseSlowAngle(lighthouse)`
+   adds the plain-language "slow to load" angle **only when Lighthouse confirms** (perf < 50),
+   wired into `handleScore` right after the deferred Lighthouse runs.
+3. **No URL in pre-reply outreach.** Stripped `williamdamato.com` + the prospect-domain
+   parenthetical from first-touch + follow-up templates; `OUTREACH_SYSTEM` now forbids any
+   link and we no longer feed the prospect's URL into the prompt; `validateDraft` rejects a
+   URL in any non-delivery draft (delivery email still carries the live link). The website is
+   revealed only after the prospect engages (delivery email).
+
+⚠️ **Outreach content changed → `compliance-reviewer` is owed** before the next outbound
+send (it's a mandatory-review trigger: outreach copy + `validateDraft`).
+
+### No-guess email gate + deferred Lighthouse — 2026-06-20 (uncommitted on `main`)
+
+Owner-specified. Two linked changes (mock-first, 236 tests green):
+
+1. **No more `info@<domain>` guessing.** `createMockEnrichment.findContacts` no longer
+   fabricates `info@<domain>` (returns `[]`), and `handleContact` now consults the
+   enrichment rung **only when a real provider is configured** (`credentialFor(ctx,
+   "enrichment")`). A lead with no real email from the **homepage pass + Playwright
+   crawl** is **disqualified** (record KEPT) and raises the enrichment-provider
+   OwnerRequest. A configured provider's found contact is still validated by domain
+   (`isPlaceholderEmail`) + the verify step.
+2. **Lighthouse deferred → only runs for emailable leads.** The Playwright audit now
+   **skips Lighthouse** (`skipLighthouse` on `auditWebsite`/`playwrightAudit`); it runs
+   in `handleScore` via the new `runDeferredLighthouse` (own short-lived Chromium) —
+   which only executes after `handleContact` resolves an email. So an un-emailable lead
+   incurs **neither** Lighthouse **nor** the visual review (the visual review was
+   already gated by pipeline order: `lead.score` is enqueued only after a contact is
+   found). Playwright mode only; mock/http decide their lighthouse at audit time as
+   before.
+
+For the original full detail in `CLAUDE.md` → "NEXT STEPS" → IMMEDIATE NEXT STEP.
+
+After that: re-run `compliance-reviewer` on the live text→/image→prompt behavior
+(mandatory before the first live send), continue the staging rehearsal to gated
+side-effects, then the "⚠️ Before going LIVE" checklist.
+
+### Staging rehearsal session — 2026-06-20 (real-path fixes, UNCOMMITTED on `main`)
+
+First run with the real paths live. **Restart `npm run worker` to load these.**
+
+- **Operational-ticket credential wiring (load-bearing).** Operational read/generation
+  tickets were minted WITHOUT a credential → `computeDryRun` forced dry-run even on
+  staging, so visual scoring / email crawl / scrape / outreach-copy / classify /
+  build-prompt all silently simulated. New `credentialFor` + `localReadCredential`
+  (`context.ts`); ~11 `operationalTicket(...)` sites in `pipelines.ts` now pass the
+  matching credential. Invariant 3 intact. **This is what makes staging exercise the
+  real paths.**
+- **Crawl perf:** `crawlForEmail` was `networkidle` + 20s/page × 8 ≈ 160s on a site that
+  never settles. Now `domcontentloaded` + per-page timeout + overall budget (config:
+  `EMAIL_DISCOVERY_PAGE_TIMEOUT_MS`=8000, `EMAIL_DISCOVERY_BUDGET_MS`=25000), maxPages 8→6.
+- **Audit settle:** bounded `networkidle` (8s) + 800ms settle BEFORE screenshot/content
+  so late/lazy hero images are captured (fixed a false "no image" claim); `loadMs`
+  measured off the load event first, so the "slow load" claim stays truthful.
+- **Outreach plain-language:** `OUTREACH_SYSTEM` bans web-design jargon (hero/CTA/etc.).
+- **Score reachability:** `scoreLead({reachableEmail})` from the resolved contact — no
+  wrongful −10 when the crawl/enrichment found the email.
+- **Email filter is DOMAIN-based:** keeps `info@`/`contact@`/`team@` on real domains,
+  rejects fake DOMAINS (expanded `PLACEHOLDER_DOMAINS`). `handleContact` judges enrichment
+  emails by domain, not source. **(This is what the IMMEDIATE step partly reverses — no
+  guessing at all.)**
+- **Dashboard:** Leads page **Email** column (inline draft + Approve & send/Reject);
+  LeadDetail **Contact** panel (email + source + verification + confidence).
+
+⚠️ **Enrichment is still mock-only** — it GUESSES `info@<domain>` and "verify" only checks
+format. That's exactly what the IMMEDIATE next step removes.
 
 ⚠️ If you want reply-classify/transcripts on Haiku, make sure no stray
 `ANTHROPIC_MODEL=claude-opus-4-8` remains in `.env` (it overrides the new Haiku

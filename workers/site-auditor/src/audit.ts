@@ -23,6 +23,8 @@ export interface AuditorDeps {
   /** Injectable for tests; defaults to real Playwright Chromium detection. */
   launchBrowser?: ChromiumLauncher;
   lighthouseRunner?: LighthouseRunner;
+  /** Defer the Lighthouse run out of the audit (see PlaywrightAuditDeps.skipLighthouse). */
+  skipLighthouse?: boolean;
 }
 
 /**
@@ -77,6 +79,7 @@ export async function auditWebsite(lead: Lead, deps: AuditorDeps): Promise<Websi
       dataDir: deps.dataDir ?? "./data",
       launchBrowser: deps.launchBrowser ?? launchChromium,
       lighthouseRunner: deps.lighthouseRunner,
+      skipLighthouse: deps.skipLighthouse,
     });
     if (result) return result;
     deps.log.warn("Playwright mode unavailable — falling back to http audit", { leadId: lead.id });

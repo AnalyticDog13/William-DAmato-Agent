@@ -212,6 +212,24 @@ export function LeadDetail() {
         </div>
       )}
 
+      <div className="panel">
+        <h3>Contact</h3>
+        {t.contacts.length === 0 ? (
+          <p className="sub">No contact email found — lead is not contactable (disqualified unless an email is discovered).</p>
+        ) : (
+          <ul>
+            {t.contacts.map((c, i) => (
+              <li key={i}>
+                <span className="mono">{c.email ?? "(none)"}</span>{" "}
+                <span className="badge blue">{c.emailSource ?? "unknown source"}</span>{" "}
+                <span className={`badge ${c.verification === "valid" ? "green" : c.verification === "risky" ? "amber" : "red"}`}>{c.verification}</span>{" "}
+                <span className="sub">confidence {(c.confidence * 100).toFixed(0)}%</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="split">
         <div className="panel">
           <h3>Current site — audit findings</h3>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nowIso, type Company, type Contact, type Lead, type WebsiteAudit } from "@william/core";
-import { FIRST_TOUCH_VARIANTS, createFirstTouchDraft, validateDraft } from "../src";
+import { DELIVERY_VARIANT, FIRST_TOUCH_VARIANTS, createFirstTouchDraft, validateDraft } from "../src";
 
 const now = nowIso();
 const base = { id: "x", createdAt: now, updatedAt: now };
@@ -48,5 +48,22 @@ describe("first-touch variant registry", () => {
     const draft = createFirstTouchDraft(input());
     expect(draft.variant).toBe("v1-cornell-mockup");
     expect(draft.body).toMatch(/already built a free mockup/i);
+  });
+
+  it("first-touch copy contains NO link/URL (no mockup link, no personal site)", () => {
+    for (const variant of FIRST_TOUCH_VARIANTS) {
+      const draft = createFirstTouchDraft(input(variant));
+      expect(draft.body, variant).not.toMatch(/https?:\/\/|www\.|williamdamato\.com|\bbiz\.example\.com\b/i);
+      expect(validateDraft(draft), variant).toEqual([]);
+    }
+  });
+
+  it("validateDraft blocks a link in pre-reply copy but allows it in the delivery email", () => {
+    const base = createFirstTouchDraft(input());
+    const withUrl = { ...base, body: `${base.body}\n\nSee it live at williamdamato.com` };
+    expect(validateDraft(withUrl).some((p) => /link\/URL/i.test(p))).toBe(true);
+    // The delivery email is the one place a URL belongs — exempt by its variant.
+    const delivery = { ...withUrl, variant: DELIVERY_VARIANT };
+    expect(validateDraft(delivery).some((p) => /link\/URL/i.test(p))).toBe(false);
   });
 });

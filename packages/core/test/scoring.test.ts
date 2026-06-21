@@ -79,6 +79,22 @@ describe("scoreLead", () => {
     expect(phoneOnly.score).toBe(noContact.score); // phone earns no reachability credit
   });
 
+  it("a crawl-resolved email earns reachability even when the HTML has none (no -10)", () => {
+    const noHtmlEmail = audit({ extracted: { contactEmails: [], phones: [], socialLinks: {}, ctas: ["book"], services: [], trustSignals: ["reviews"] } });
+    const htmlOnly = scoreLead(noHtmlEmail); // HTML has no email → -10 penalty
+    const resolvedByCrawl = scoreLead(noHtmlEmail, null, undefined, { reachableEmail: true });
+    expect(htmlOnly.reasons.join(" ")).toMatch(/No email found/);
+    expect(resolvedByCrawl.reasons.join(" ")).toMatch(/reachable for email outreach/);
+    expect(resolvedByCrawl.reasons.join(" ")).not.toMatch(/No email found/);
+    expect(resolvedByCrawl.score).toBeGreaterThan(htmlOnly.score);
+  });
+
+  it("explicit reachableEmail:false still penalizes (-10) regardless of HTML emails", () => {
+    const withHtmlEmail = audit(); // has hello@example.com in HTML
+    const r = scoreLead(withHtmlEmail, null, undefined, { reachableEmail: false });
+    expect(r.reasons.join(" ")).toMatch(/No email found/);
+  });
+
   it("null visual assessment leaves the score unchanged", () => {
     const a = audit({});
     expect(scoreLead(a, null).score).toBe(scoreLead(a).score);
