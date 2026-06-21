@@ -319,9 +319,11 @@ describe("sourcing-runs API", () => {
       body: JSON.stringify({ location: "Ithaca, NY", niche: "coffee_shop", target: 5 }),
     });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { run: { status: string; approvalRequestId: string }; approval: { gate: string } };
+    const body = (await res.json()) as { run: { status: string; approvalRequestId: string }; approval: { id: string; gate: string } };
     expect(body.run.status).toBe("pending_approval");
     expect(body.approval.gate).toBe("ACTIVATE_NEW_LEAD_SOURCE");
+    // Fix 1: assert the approval back-fill — a dropped save() would silently pass without this
+    expect(body.run.approvalRequestId).toBe(body.approval.id);
   });
 
   it("rejects an unknown niche", async () => {
@@ -330,6 +332,41 @@ describe("sourcing-runs API", () => {
       body: JSON.stringify({ location: "X", niche: "not_a_niche", target: 3 }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it("granting ACTIVATE_NEW_LEAD_SOURCE sets run to running and enqueues lead.source", async () => {
+    // Create a sourcing run (mirrors the pattern above)
+    const createRes = await authed("/api/sourcing-runs", {
+      method: "POST",
+      body: JSON.stringify({ location: "Buffalo, NY", niche: "barbershop", target: 3 }),
+    });
+    expect(createRes.status).toBe(201);
+    const { run, approval } = (await createRes.json()) as {
+      run: { id: string; status: string; approvalRequestId: string };
+      approval: { id: string; gate: string };
+    };
+    expect(run.status).toBe("pending_approval");
+
+    // Grant the approval — mirrors the mechanism used in the DEPLOY_PRODUCTION and
+    // SEND_FIRST_TOUCH grant tests (same decide endpoint + payload + authed helper)
+    const decide = await authed(`/api/approvals/${approval.id}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "granted", note: "kick off sourcing" }),
+    });
+    expect(decide.status).toBe(200);
+
+    // Assert run status changed to "running" (observable via ctx.store, same pattern
+    // as ctx.store.siteProjects.get(projectId)!.status in the DEPLOY_PRODUCTION test)
+    expect(ctx.store.sourcingRuns.get(run.id)!.status).toBe("running");
+
+    // Assert a lead.source job was enqueued with the correct sourcingRunId
+    // (ctx.store.queue.list() is the same accessor used implicitly by the worker;
+    // the queue is fully observable in-memory — same approach as ctx.store.campaignSyncs
+    // and ctx.store.deployments in the SEND_FIRST_TOUCH and DEPLOY_PRODUCTION grant tests)
+    const sourceJobs = ctx.store.queue.list().filter(
+      (j) => j.type === "lead.source" && (j.payload as { sourcingRunId?: string }).sourcingRunId === run.id,
+    );
+    expect(sourceJobs.length).toBeGreaterThan(0);
   });
 });
 
