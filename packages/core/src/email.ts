@@ -38,6 +38,7 @@ export const PLACEHOLDER_DOMAINS: ReadonlySet<string> = new Set([
   "business.com",
   "sentry.io",
   "wixpress.com",
+  "sentry-next.wixpress.com", // Wix/Sentry telemetry domain that leaks into page source
   // Theme/CMS/store-builder demo & placeholder domains. These appear verbatim in
   // unconfigured Shopify/Wix/Squarespace/WordPress themes (e.g. a leftover
   // `info@mystore.com` in the source) and must NEVER be treated as a real

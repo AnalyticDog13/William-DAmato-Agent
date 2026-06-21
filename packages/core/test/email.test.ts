@@ -29,6 +29,7 @@ describe("email helpers", () => {
       "info@mystore.com", "owner@yourstore.com", "hello@yourcompany.com",
       "sales@yourbusiness.com", "x@demo.com", "y@acme.com", "z@mailinator.com",
       "team@companyname.com", "hi@placeholder.com",
+      "noreply@sentry-next.wixpress.com", // Wix/Sentry telemetry leak
     ]) expect(isPlaceholderEmail(e)).toBe(true);
     // A real custom domain or real provider is still kept.
     expect(isPlaceholderEmail("hola@localcafe.co")).toBe(false);
