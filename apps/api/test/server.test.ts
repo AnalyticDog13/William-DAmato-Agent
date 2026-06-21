@@ -201,6 +201,26 @@ describe("lead + approval flow over HTTP", () => {
     expect(res.status).toBe(409);
   });
 
+  it("rejecting a SEND_FIRST_TOUCH email draft sets the draft status to rejected", async () => {
+    await authed("/api/leads", {
+      method: "POST",
+      body: JSON.stringify({ companyName: "Reject Flow Co", websiteUrl: "https://rejectflow.example.com", niche: "barbershop", city: "Ithaca" }),
+    });
+    const leadId = ctx.store.leads.list().find((l) => ctx.store.companies.get(l.companyId)?.name === "Reject Flow Co")!.id;
+    const draft = ctx.store.outreachDrafts.list({ leadId })[0]!;
+    expect(draft).toBeDefined();
+    expect(draft.status).not.toBe("rejected");
+    const approval = ctx.store.approvals.list().find((a) => a.gate === "SEND_FIRST_TOUCH" && a.subjectId === draft.id)!;
+    expect(approval).toBeDefined();
+
+    const decide = await authed(`/api/approvals/${approval.id}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "rejected", note: "not a fit" }),
+    });
+    expect(decide.status).toBe(200);
+    expect(ctx.store.outreachDrafts.get(draft.id)!.status).toBe("rejected");
+  });
+
   it("validates policy updates", async () => {
     const bad = await authed("/api/policies/NOT_A_GATE", { method: "POST", body: JSON.stringify({ mode: "closed" }) });
     expect(bad.status).toBe(400);

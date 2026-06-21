@@ -199,6 +199,11 @@ export function createServer(ctx: AppContext): Express {
             ctx.store.queue.enqueue({ type: "deploy.production", payload: { siteProjectId: approval.subjectId, approvalRequestId: approval.id }, traceId: approval.traceId, leadId: approval.leadId });
           }
         }
+      } else if (decision === "rejected" && approval.gate === "SEND_FIRST_TOUCH") {
+        // Rejecting an email draft marks the DRAFT itself "rejected" (not just the
+        // approval) so it leaves the pending state and reads correctly in the UI.
+        const draft = ctx.store.outreachDrafts.get(approval.subjectId);
+        if (draft) ctx.store.outreachDrafts.save({ ...draft, status: "rejected", updatedAt: nowIso() });
       }
       await kickQueue(ctx);
       res.json({ approval });

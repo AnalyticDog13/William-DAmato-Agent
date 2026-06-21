@@ -46,6 +46,31 @@ Other open threads:
 - Real Vercel git-source deploy for `site.ship`; Stripe test-mode end-to-end; then the
   "⚠️ Before going LIVE" checklist.
 
+### Email ranking + telemetry suffix-blacklist + reject→draft status — 2026-06-22 (owner-reported)
+
+Three owner-reported outreach fixes (TDD, mock-first; 280 tests green, typecheck clean, demo 0
+dead-letter on a clean db; `compliance-reviewer` PASS). Triggered by easlandscaping.com getting an
+email that wasn't even on the site while real service contacts were missed.
+
+1. **Ranked email picker** (`bestBusinessEmail` in `packages/core/src/email.ts`) replaces
+   "first non-placeholder wins". Tiers: role@own-domain > any@own-domain > company-named@free-provider
+   > role@other > other; no-reply/system demoted; placeholders excluded; lenient fallback to
+   best-available. New `isTopTierContact` lets the homepage pass still crawl when its hit isn't a
+   role@own-domain (so a junk homepage address can't shadow a real `/contact` one), and lets the
+   crawl early-exit. Wired into `handleContact` + `crawlForEmail` (crawl now ranks across ALL pages,
+   not first-match-per-page). The systematic cause: nothing ranked — first email in source order won,
+   and the crawl scanned raw HTML so hidden/3rd-party addresses leaked.
+2. **Suffix-matching blacklist.** `isPlaceholderEmail` now exact-matches `PLACEHOLDER_DOMAINS` AND
+   suffix-matches a new `PLACEHOLDER_DOMAIN_SUFFIXES` set (`wixpress.com`, `sentry.io`) → kills
+   `sentry.wixpress.com` and any `*.wixpress.com`/`*.sentry.io` (no more whack-a-mole). Split kept
+   separate so the suite's `*.example.com` fixtures (exact-only) still resolve as real.
+3. **Reject → draft status.** The decide route sets the OutreachDraft to `"rejected"` when a
+   `SEND_FIRST_TOUCH` draft is rejected (was staying `pending_approval`). Lead status untouched.
+
+Note: `npm run demo` resets `./data/william.db` on start — if `npm run worker` is running it locks
+that file and the demo silently reuses a stale db ("0 created, N duplicates" → "already granted").
+Stop the worker, or run `DATA_DIR=./data-demo-clean npm run demo`. Not a code bug.
+
 ### Email blacklist + Lighthouse-gated slow claim + no-URL outreach — 2026-06-21 (committed `726d32d`/`35bee7d`)
 
 Owner-reported fixes (mock-first, 242 tests green, typecheck clean, demo 0 dead-letter):

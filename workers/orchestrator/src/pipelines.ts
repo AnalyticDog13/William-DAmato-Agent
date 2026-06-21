@@ -1,9 +1,10 @@
 import {
   DurableLesson,
   companyIdentityKey,
-  firstRealEmail,
+  bestBusinessEmail,
   identityKeys,
   isPlaceholderEmail,
+  isTopTierContact,
   newId,
   newTraceId,
   nicheSearchQuery,
@@ -305,17 +306,22 @@ const handleContact: JobHandler = async (ctx, job) => {
 
   if (!contact) {
     const auditEmails = audit?.extracted.contactEmails ?? [];
-    let resolvedEmail = firstRealEmail(auditEmails);          // 1) cheap homepage pass
+    const emailCtx = { siteUrl: lead.websiteUrl, companyName: ctx.store.companies.get(lead.companyId)?.name ?? null };
+    let resolvedEmail = bestBusinessEmail(auditEmails, emailCtx);  // 1) homepage pass (ranked)
     let source: "website_published" | "website_crawled" | "enrichment" = "website_published";
     let foundOn: string | null = null;
 
-    // 2) Playwright escalation — only on a miss. The operational ticket governs
-    //    dry-run: in local it's a dry-run ticket, so crawlForEmail simulates and
-    //    returns empty (no browser launch, zero network).
-    // `localReadCredential` returns sandbox/live unconditionally; that is safe
-    //    ONLY because computeDryRun forces dry-run when env === "local" BEFORE
-    //    the credential is consulted (invariant 3), so local can never crawl live.
-    if (!resolvedEmail && lead.websiteUrl) {
+    // 2) Playwright escalation — when the homepage gave us NOTHING, or only a
+    //    non-top-tier address. A junk/off-domain homepage email must not shadow a
+    //    real service address on /contact (the easlandscaping case), so we still
+    //    crawl, rank across all pages, and keep whichever of homepage-best vs
+    //    crawl-best ranks higher.
+    // The operational ticket governs dry-run: in local it's a dry-run ticket, so
+    //    crawlForEmail simulates and returns empty (no browser launch, zero
+    //    network). `localReadCredential` returns sandbox/live unconditionally;
+    //    that is safe ONLY because computeDryRun forces dry-run when env ===
+    //    "local" BEFORE the credential is consulted (invariant 3).
+    if (lead.websiteUrl && (!resolvedEmail || !isTopTierContact(resolvedEmail, emailCtx))) {
       const crawlTicket = operationalTicket(ctx, "site_audit.crawl", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId, localReadCredential(ctx));
       const crawl = await crawlForEmail(lead, {
         log: ctx.log,
@@ -325,8 +331,14 @@ const handleContact: JobHandler = async (ctx, job) => {
         maxPages: ctx.config.emailDiscovery.maxPages,
         pageTimeoutMs: ctx.config.emailDiscovery.pageTimeoutMs,
         budgetMs: ctx.config.emailDiscovery.budgetMs,
+        companyName: emailCtx.companyName,
       });
-      if (crawl.email) { resolvedEmail = crawl.email; source = "website_crawled"; foundOn = crawl.foundOn ?? null; }
+      if (crawl.email) {
+        const better = bestBusinessEmail([resolvedEmail, crawl.email].filter((x): x is string => !!x), emailCtx);
+        if (better === crawl.email && better !== resolvedEmail) {
+          resolvedEmail = crawl.email; source = "website_crawled"; foundOn = crawl.foundOn ?? null;
+        }
+      }
     }
 
     // 3) An email resolved from the website (homepage pass or crawl) becomes the
