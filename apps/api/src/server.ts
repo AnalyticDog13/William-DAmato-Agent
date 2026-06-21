@@ -40,6 +40,7 @@ function collections(ctx: AppContext): Record<string, Repository<any>> {
     "site-projects": s.siteProjects,
     "site-revisions": s.siteRevisions,
     "website-briefs": s.websiteBriefs,
+    "sourcing-runs": s.sourcingRuns,
     approvals: s.approvals,
     deployments: s.deployments,
     "invoice-drafts": s.invoiceDrafts,

@@ -27,6 +27,7 @@ import {
   ReplyEvent,
   SiteProject,
   SiteRevision,
+  SourcingRun,
   UnsubscribeRecord,
   WebhookEventRecord,
   WebsiteAudit,
@@ -65,6 +66,7 @@ export class Store {
   readonly siteProjects: Repository<SiteProject>;
   readonly siteRevisions: Repository<SiteRevision>;
   readonly websiteBriefs: Repository<WebsiteBrief>;
+  readonly sourcingRuns: Repository<SourcingRun>;
   readonly approvals: Repository<ApprovalRequest>;
   readonly deployments: Repository<DeploymentRecord>;
   readonly invoiceDrafts: Repository<InvoiceDraft>;
@@ -170,6 +172,11 @@ export class Store {
       leadId: (b) => b.leadId,
       status: (b) => b.status,
       skey: (b) => b.opportunityId,
+    });
+    this.sourcingRuns = repo<SourcingRun>({
+      collection: "sourcing_runs",
+      schema: SourcingRun,
+      status: (r) => r.status,
     });
     this.approvals = repo<ApprovalRequest>({
       collection: "approval_requests",
