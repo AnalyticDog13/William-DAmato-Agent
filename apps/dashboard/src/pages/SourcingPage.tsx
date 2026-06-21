@@ -38,7 +38,9 @@ export function SourcingPage() {
   const [error, setError] = useState("");
 
   const refresh = useCallback(() => {
-    api<{ items: SourcingRun[] }>("/api/sourcing-runs").then((r) => setRuns(r.items));
+    api<SourcingRun[]>("/api/sourcing-runs")
+      .then((rows) => setRuns(Array.isArray(rows) ? rows : []))
+      .catch((err) => setError(err instanceof Error ? err.message : "failed to load runs"));
   }, []);
   useEffect(refresh, [refresh]);
 

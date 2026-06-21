@@ -24,7 +24,7 @@ const NAV: NavEntry[] = [
   { path: "/", label: "Overview" },
   { path: "/review-queue", label: "Review Queue" },
   { path: "/leads", label: "Leads", group: "Pipeline" },
-  { path: "/sourcing", label: "Source leads" },
+  { path: "/sourcing", label: "Source leads", group: "Pipeline" },
   { path: "/audits", label: "Audits", sections: [{ title: "Website Audits", collection: "audits", columns: ["leadId", "mode", "auditScore", "summary"] }] },
   { path: "/outreach", label: "Outreach", sections: [
     { title: "Drafts", collection: "outreach-drafts", columns: ["leadId", "status", "subject", "variant"] },
