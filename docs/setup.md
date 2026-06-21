@@ -81,6 +81,18 @@ crawl (only on a miss; robots-respecting, dry-run-safe) → enrichment → disqu
 Visual scoring runs only in `AUDITOR_MODE=playwright` (it scores the audit
 screenshots) and is mock-first (no-op in local/dry-run).
 
+## Lead sourcing
+
+| Env var | Controls | Default |
+|---|---|---|
+| `LEAD_SOURCING_CANDIDATE_CAP` | max businesses audited per sourcing run before stopping | 40 |
+| `LEAD_SOURCING_RECHECK_MS` | controller re-check interval (ms) for pending sourcing jobs | 30000 |
+
+Requires `GOOGLE_MAPS_API_KEY` and the `ACTIVATE_NEW_LEAD_SOURCE` policy gate
+approval to actually source. One-click batch sourcing by city + niche via Google
+Places API (v1 searchText); sourcing stops at a qualified target (drafted email
+& score > 35) or the candidate cap (whichever comes first).
+
 ## Site auditor modes
 
 - `AUDITOR_MODE=mock` (default) — synthesized audits, zero network.

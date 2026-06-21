@@ -65,6 +65,12 @@ describe("loadConfig flags", () => {
     expect(cfg.emailDiscovery.subpaths).toEqual(["/a", "/b", "/c"]);
     expect(cfg.emailDiscovery.maxPages).toBe(3);
   });
+
+  it("exposes leadSourcing defaults", () => {
+    const cfg = loadConfig();
+    expect(cfg.leadSourcing.defaultCandidateCap).toBe(40);
+    expect(cfg.leadSourcing.recheckDelayMs).toBeGreaterThan(0);
+  });
 });
 
 describe("loadDotEnv", () => {

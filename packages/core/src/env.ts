@@ -48,6 +48,8 @@ export interface RuntimeConfig {
    *  maxPages, a per-page navigation timeout, and an overall wall-clock budget
    *  so a slow site can never blow the per-lead time. */
   emailDiscovery: { subpaths: string[]; maxPages: number; pageTimeoutMs: number; budgetMs: number };
+  /** Lead sourcing: Google Places API (v1) search budget and controller re-check interval. */
+  leadSourcing: { defaultCandidateCap: number; recheckDelayMs: number };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -107,6 +109,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
       maxPages: Number.isFinite(maxPagesRaw) && maxPagesRaw > 0 ? Math.floor(maxPagesRaw) : 6,
       pageTimeoutMs: posInt(env.EMAIL_DISCOVERY_PAGE_TIMEOUT_MS, 8_000),
       budgetMs: posInt(env.EMAIL_DISCOVERY_BUDGET_MS, 25_000),
+    },
+    leadSourcing: {
+      defaultCandidateCap: posInt(env.LEAD_SOURCING_CANDIDATE_CAP, 40),
+      recheckDelayMs: posInt(env.LEAD_SOURCING_RECHECK_MS, 30_000),
     },
   };
 }
