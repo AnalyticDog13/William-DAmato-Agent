@@ -24,4 +24,19 @@ describe("mock places adapter (new shape)", () => {
     expect(Array.isArray(res.businesses)).toBe(true);
     expect(res).toHaveProperty("nextPageToken");
   });
+
+  it("sets phone: null on all returned businesses", async () => {
+    const places = createMockPlaces();
+    const res = await places.searchBusinesses(ticket(false), { query: "coffee shops in Ithaca, NY", location: "Ithaca, NY" });
+    expect(res.businesses.length).toBeGreaterThan(0);
+    expect(res.businesses.every((b) => b.phone === null)).toBe(true);
+    expect(res.nextPageToken).toBeNull();
+  });
+
+  it("returns empty businesses on pageToken (no infinite pages)", async () => {
+    const places = createMockPlaces();
+    const res = await places.searchBusinesses(ticket(false), { query: "coffee shops in Ithaca, NY", location: "Ithaca, NY", pageToken: "token_abc" });
+    expect(res.businesses).toHaveLength(0);
+    expect(res.nextPageToken).toBeNull();
+  });
 });
