@@ -4,11 +4,14 @@ export const IsoDate = z.string().datetime({ offset: true }).or(z.string().datet
 export const Id = z.string().min(4);
 
 export const Niche = z.enum([
-  "barbershop",
-  "fashion",
-  "photographer",
-  "coffee_shop",
-  "restaurant",
+  "barbershop", "fashion", "photographer", "coffee_shop", "restaurant",
+  "med_spa", "dental", "chiropractor", "law_firm", "real_estate",
+  "hvac", "plumbing", "electrician", "landscaping", "gym",
+  "yoga_pilates", "hair_salon", "nail_salon", "day_spa", "auto_repair",
+  "roofing", "painter", "cleaning", "veterinary", "accounting",
+  "insurance", "pest_control", "bakery", "florist", "jeweler",
+  "optometry", "dermatology", "physical_therapy", "tattoo", "event_venue",
+  "interior_design", "daycare", "pet_grooming",
   "other",
 ]);
 export type Niche = z.infer<typeof Niche>;

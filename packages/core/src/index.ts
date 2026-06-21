@@ -7,3 +7,4 @@ export * from "./email";
 export * from "./schema/index";
 export * from "./policy/gates";
 export * from "./policy/engine";
+export * from "./niche";

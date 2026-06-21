@@ -1,6 +1,7 @@
 import {
   newId,
   nowIso,
+  NICHE_META,
   type Company,
   type Contact,
   type Lead,
@@ -10,15 +11,6 @@ import {
 
 /** The exact opt-out line every first-touch email must contain (CHANGE_COMPLIANCE_TEXT gate protects edits). */
 export const OPT_OUT_LINE = `Reply "I'm not interested" and you won't hear from me again.`;
-
-const NICHE_HOOKS: Record<string, string> = {
-  barbershop: "I help barbershops get found and booked online",
-  fashion: "I help fashion brands look as sharp online as their pieces do",
-  photographer: "I help photographers turn portfolios into inquiries",
-  coffee_shop: "I help coffee shops turn foot traffic into regulars",
-  restaurant: "I help restaurants fill more tables from search",
-  other: "I help local businesses win more customers online",
-};
 
 export interface DraftInput {
   lead: Lead;
@@ -47,7 +39,7 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
   const { lead, company, contact, audit } = input;
   const firstName = contact.name?.split(/\s+/)[0];
   const greeting = firstName ? `Hi ${firstName},` : `Hi there,`;
-  const hook = NICHE_HOOKS[lead.niche] ?? NICHE_HOOKS.other!;
+  const hook = NICHE_META[lead.niche].outreachHook;
 
   const requested = input.variant ?? FIRST_TOUCH_VARIANTS[0];
   // Unknown variant must never kill the pipeline mid-draft: fall back to v1.
