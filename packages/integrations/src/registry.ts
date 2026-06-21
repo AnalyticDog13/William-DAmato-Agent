@@ -17,6 +17,7 @@ import { createFirecrawlAdapter } from "./real/firecrawl";
 import { createGmailAdapter } from "./real/gmail";
 import { createInstantlyAdapter } from "./real/instantly";
 import { createLlmAdapter } from "./real/llm";
+import { createPlacesAdapter } from "./real/places";
 import type { RealDeps } from "./real/shared";
 import { createStripeAdapter } from "./real/stripe";
 import { createVercelAdapter } from "./real/vercel";
@@ -93,7 +94,7 @@ export function createIntegrations(
     vercel: env.VERCEL_TOKEN ? createVercelAdapter(deps, log) : createMockVercel(log),
     github: createMockGithub(),
     enrichment: createMockEnrichment(),
-    places: createMockPlaces(),
+    places: env.GOOGLE_MAPS_API_KEY ? createPlacesAdapter(deps, log) : createMockPlaces(),
     calendar: createMockCalendar(),
     transcripts: createMockTranscripts(),
     higgsfield: createMockHiggsfield(log),
