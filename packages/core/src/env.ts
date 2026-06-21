@@ -1,5 +1,3 @@
-import { existsSync } from "node:fs";
-
 export type WilliamEnv = "local" | "staging" | "production";
 
 /**
@@ -10,8 +8,13 @@ export type WilliamEnv = "local" | "staging" | "production";
  * `loadConfig`, so the test suite stays hermetic. A missing file is a no-op:
  * credentials are optional and the system stays in dry-run with mock adapters
  * until real values exist (Blocked ≠ stuck).
+ *
+ * Uses a lazy require so this module is browser-safe (Vite won't try to bundle
+ * node:fs; the function is only ever called from Node entry points).
  */
 export function loadDotEnv(path = ".env"): void {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { existsSync } = require("node:fs") as typeof import("node:fs");
   if (existsSync(path)) process.loadEnvFile(path);
 }
 

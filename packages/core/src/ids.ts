@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"; // Crockford base32, lowercase
 
 /**
@@ -13,7 +11,8 @@ export function newId(prefix: string): string {
     time = ALPHABET[ts % 32] + time;
     ts = Math.floor(ts / 32);
   }
-  const rand = randomBytes(16);
+  const rand = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(rand);
   let suffix = "";
   for (let i = 0; i < 16; i++) suffix += ALPHABET[rand[i]! % 32];
   return `${prefix}_${time}${suffix}`;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { NICHE_META } from "@william/core/src/niche";
+import { NICHE_META } from "@william/core";
 import { api } from "../api";
 
 interface SourcingRun {
