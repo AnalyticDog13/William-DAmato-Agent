@@ -168,9 +168,9 @@ export function createMockPlaces(): PlacesAdapter {
     name: "mock-google-maps",
     async searchBusinesses(ticket, input) {
       requireTicket(ticket, "places.searchBusinesses");
-      return MOCK_BUSINESSES.filter(
-        (b) => input.query === "*" || b.niche.includes(input.query.toLowerCase().replace(/\s+/g, "_")),
-      ).slice(0, input.limit ?? 20);
+      // Page 1 returns the canned businesses; no further pages.
+      const businesses = input.pageToken ? [] : MOCK_BUSINESSES.map((b) => ({ ...b, phone: null }));
+      return { businesses, nextPageToken: null };
     },
   };
 }

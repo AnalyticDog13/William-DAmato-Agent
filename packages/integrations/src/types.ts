@@ -108,12 +108,20 @@ export interface DiscoveredBusiness {
   rating: number | null;
 }
 
+export interface PlacesSearchInput {
+  query: string;
+  location: string;
+  pageToken?: string | null;
+}
+
+export interface PlacesSearchResult {
+  businesses: DiscoveredBusiness[];
+  nextPageToken: string | null;
+}
+
 export interface PlacesAdapter {
   readonly name: string;
-  searchBusinesses(
-    ticket: PolicyTicket,
-    input: { query: string; location: string; limit?: number },
-  ): Promise<DiscoveredBusiness[]>;
+  searchBusinesses(ticket: PolicyTicket, input: PlacesSearchInput): Promise<PlacesSearchResult>;
 }
 
 export interface CalendarAdapter {
