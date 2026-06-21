@@ -312,6 +312,27 @@ describe("builder routes disabled when WILLIAM_BUILDS_WEBSITES=false (default)",
   });
 });
 
+describe("sourcing-runs API", () => {
+  it("POST /api/sourcing-runs creates a run + ACTIVATE_NEW_LEAD_SOURCE approval", async () => {
+    const res = await authed("/api/sourcing-runs", {
+      method: "POST",
+      body: JSON.stringify({ location: "Ithaca, NY", niche: "coffee_shop", target: 5 }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { run: { status: string; approvalRequestId: string }; approval: { gate: string } };
+    expect(body.run.status).toBe("pending_approval");
+    expect(body.approval.gate).toBe("ACTIVATE_NEW_LEAD_SOURCE");
+  });
+
+  it("rejects an unknown niche", async () => {
+    const res = await authed("/api/sourcing-runs", {
+      method: "POST",
+      body: JSON.stringify({ location: "X", niche: "not_a_niche", target: 3 }),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("webhooks", () => {
   it("accepts unsigned webhooks ONLY in local dry-run, recording a compliance event", async () => {
     const res = await fetch(`${base}/webhooks/instantly`, {

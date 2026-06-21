@@ -184,6 +184,12 @@ export function createServer(ctx: AppContext): Express {
           ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: approval.subjectId }, traceId: approval.traceId, leadId: approval.leadId });
         } else if (approval.gate === "SEND_PAYMENT_REQUEST") {
           ctx.store.queue.enqueue({ type: "billing.execute", payload: { invoiceDraftId: approval.subjectId }, traceId: approval.traceId, leadId: approval.leadId });
+        } else if (approval.gate === "ACTIVATE_NEW_LEAD_SOURCE") {
+          const run = ctx.store.sourcingRuns.get(approval.subjectId);
+          if (run) {
+            ctx.store.sourcingRuns.save({ ...run, status: "running", updatedAt: nowIso() });
+            ctx.store.queue.enqueue({ type: "lead.source", payload: { sourcingRunId: run.id }, traceId: approval.traceId });
+          }
         } else if (approval.gate === "DEPLOY_PRODUCTION") {
           // Same gate, two paths: ship the owner's repo (business head) vs
           // deploy William's own artifact (builder re-enabled).
@@ -333,6 +339,59 @@ export function createServer(ctx: AppContext): Express {
       traceId: newTraceId(),
     });
     res.status(201).json({ approval });
+  });
+
+  // Sourcing runs: owner triggers a one-click batch lead-sourcing session.
+  // POST creates a SourcingRun (pending_approval) + ACTIVATE_NEW_LEAD_SOURCE approval.
+  // Granting that approval sets the run to "running" and enqueues lead.source.
+  api.post("/sourcing-runs", (req, res) => {
+    const body = req.body ?? {};
+    const niche = Niche.safeParse(body.niche);
+    const target = Number(body.target);
+    const location = typeof body.location === "string" ? body.location.trim() : "";
+    if (!niche.success || !location || !Number.isInteger(target) || target <= 0) {
+      res.status(400).json({ error: "location, valid niche, and positive integer target required" });
+      return;
+    }
+    const candidateCap =
+      Number.isInteger(body.candidateCap) && body.candidateCap > 0
+        ? (body.candidateCap as number)
+        : ctx.config.leadSourcing.defaultCandidateCap;
+    const now = nowIso();
+    const traceId = newTraceId();
+    const run = ctx.store.sourcingRuns.insert({
+      id: newId("src"),
+      createdAt: now,
+      updatedAt: now,
+      location,
+      niche: niche.data,
+      target,
+      candidateCap,
+      status: "pending_approval",
+      candidatesIngested: 0,
+      qualifiedCount: 0,
+      leadIds: [],
+      nextPageToken: null,
+      checks: 0,
+      approvalRequestId: null,
+      resultNote: null,
+      traceId,
+    });
+    const approval = requestApproval(ctx, {
+      gate: "ACTIVATE_NEW_LEAD_SOURCE",
+      subjectType: "SourcingRun",
+      subjectId: run.id,
+      leadId: null,
+      title: `Source ${target} ${niche.data} lead(s) in ${location}`,
+      detail: `Google Places sourcing run. Candidate cap ${candidateCap}.`,
+      traceId,
+    });
+    ctx.store.sourcingRuns.save({ ...run, approvalRequestId: approval.id });
+    res.status(201).json({ run: { ...run, approvalRequestId: approval.id }, approval });
+  });
+
+  api.get("/sourcing-runs", (_req, res) => {
+    res.json(ctx.store.sourcingRuns.list({ limit: 100 }));
   });
 
   api.get("/policies", (_req, res) => {
