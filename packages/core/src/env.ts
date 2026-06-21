@@ -9,13 +9,18 @@ export type WilliamEnv = "local" | "staging" | "production";
  * credentials are optional and the system stays in dry-run with mock adapters
  * until real values exist (Blocked ≠ stuck).
  *
- * Uses a lazy require so this module is browser-safe (Vite won't try to bundle
- * node:fs; the function is only ever called from Node entry points).
+ * No node:fs import keeps this module browser-safe for the dashboard bundle;
+ * the function is only ever called from Node entry points.
  */
 export function loadDotEnv(path = ".env"): void {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { existsSync } = require("node:fs") as typeof import("node:fs");
-  if (existsSync(path)) process.loadEnvFile(path);
+  // process.loadEnvFile throws if the file is missing/unreadable — treat as a
+  // no-op (credentials are optional; the system stays dry-run with mocks until
+  // real values exist).
+  try {
+    process.loadEnvFile(path);
+  } catch {
+    // no .env present — fine.
+  }
 }
 
 export interface RuntimeConfig {
