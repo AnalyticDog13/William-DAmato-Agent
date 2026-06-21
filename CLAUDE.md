@@ -596,15 +596,25 @@ deliverability verifier (today's "verify" only checks format) remains future wor
 
 ### NEXT STEPS (staging rehearsal underway — real-path fixes landed)
 
-**Where we are (2026-06-20):** staging rehearsal has STARTED — `WILLIAM_ENV=staging`,
-`DRY_RUN=false`, `AUDITOR_MODE=playwright` are set and the real paths have executed for
-the first time (real Chromium audit + screenshots, Sonnet/Haiku vision score, email
-crawl). The "Done (Staging rehearsal session …)" fixes above landed (credential wiring,
-crawl perf, audit settle, plain-language outreach, score reachability, domain-based
-email filter, dashboard Email column + Contact panel). **All of it is UNCOMMITTED on
-`main`** (235 tests green, typecheck clean, demo 0 dead-letter) — commit + push is
-pending owner sign-off, and the running worker must be restarted to pick it up. No
-outbound has happened yet (no real send, payment, or prod deploy).
+**Where we are (2026-06-21):** staging rehearsal is underway and **the first real
+outbound has happened** — two leads approved + pushed to the live Instantly campaign
+(queued; they send Monday — the campaign sends weekdays only). All the staging-rehearsal
++ email-gate + blacklist + Lighthouse-gated-slow + no-URL-outreach work is **COMMITTED +
+PUSHED** on `main` (`5cd2a2f` → `726d32d` → `35bee7d`; 242 tests green, typecheck clean,
+demo 0 dead-letter, `compliance-reviewer` 8/8 PASS on the outreach delta). The running
+worker must be restarted to pick up changes. **Still unproven live:** the inbound side —
+a real reply through the poller → classifier → opportunity → brief → ship → delivery.
+
+**🔨 ACTIVE BUILD — automatic lead sourcing (in progress).** Spec:
+`docs/superpowers/specs/2026-06-21-lead-sourcing-design.md`. Plan (9 TDD tasks):
+`docs/superpowers/plans/2026-06-21-lead-sourcing.md` (committed `5baad73`). One-click
+batch: source by city + niche via Google Places API (New, `/v1` searchText), gated by
+`ACTIVATE_NEW_LEAD_SOURCE`, stops at a target (qualified = drafted email & score > 35) or
+a candidate cap (default 40); self-re-enqueuing `lead.source` controller + `SourcingRun`
+record; expands the niche taxonomy (~30 profitable niches) via a single `NICHE_META`
+source of truth; no phone collected. **Execute the plan task-by-task** (executing-plans
+or subagent-driven-development); mock-first so the suite stays green with zero keys.
+Run `compliance-reviewer` at Task 9 (new gated side-effecting path).
 
 **What's working right now:** the full DRY-RUN pipeline end-to-end — intake → audit →
 **email gate/staged discovery** → score (**+ visual score when screenshots exist**) →
@@ -614,8 +624,8 @@ visual assessment; the policy/compliance suite is green. **Nothing outbound has
 happened yet** (no real send, scrape, vision call, crawl, or payment).
 
 **✅ DONE (owner-reported, 2026-06-21) — placeholder blacklist + Lighthouse-gated slow claim
-+ no-URL outreach.** Uncommitted on `main`; 242 tests green, typecheck clean, demo 0
-dead-letter.
++ no-URL outreach.** Committed + pushed (`726d32d`, blacklist add `35bee7d`); 242 tests
+green, typecheck clean, demo 0 dead-letter; `compliance-reviewer` 8/8 PASS.
   - **Placeholder-domain blacklist expanded** (`packages/core/src/email.ts`): a real lead's
     Shopify-template `…@mystore.com` was approved as a contact (it shadowed the real address
     because `mystore.com` wasn't blacklisted and `firstRealEmail` returns the first
@@ -636,7 +646,7 @@ dead-letter.
     the next send.**
 
 **✅ DONE (owner-specified, 2026-06-20) — dropped the `info@<domain>` guess; don't analyze
-un-emailable leads.** Uncommitted on `main`; 236 tests green, typecheck clean, demo 0
+un-emailable leads.** Committed + pushed (`726d32d`); 236→242 tests green, typecheck clean, demo 0
 dead-letter. Two linked changes:
   - **No more `info@<domain>` guessing.** `createMockEnrichment.findContacts` no longer
     fabricates `info@<domain>` (returns `[]`), and `handleContact` consults the enrichment

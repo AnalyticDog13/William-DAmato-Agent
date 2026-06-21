@@ -7,30 +7,35 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a
 > reply doesn't start with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-20 — **staging rehearsal has STARTED.** `WILLIAM_ENV=staging`,
-`DRY_RUN=false`, `AUDITOR_MODE=playwright` are set and the real paths executed for the
-first time (real Chromium audit + screenshots, Sonnet/Haiku vision score, email crawl).
-A batch of real-path fixes landed this session (see "Staging rehearsal session" below
-and the matching section in `CLAUDE.md`). **All of it is UNCOMMITTED on `main`** — 235
-tests green, typecheck clean, `npm run demo` 0 dead-letter, dashboard builds,
-`compliance-reviewer` PASS on every sensitive delta. Commit/push awaits owner sign-off;
-the running `npm run worker` must be **restarted** to load the changes.
+**Last updated:** 2026-06-21 — **first real outbound is live + lead-sourcing build started.**
+Two leads were approved and pushed to the live Instantly campaign (queued; they send Monday —
+the campaign is weekdays-only). Everything through this session is **COMMITTED + PUSHED** on
+`main` (`5cd2a2f`→`726d32d`→`35bee7d`→ spec `823da8b`→ plan `5baad73`); 242 tests green,
+typecheck clean, `npm run demo` 0 dead-letter, `compliance-reviewer` 8/8 PASS on the outreach
+delta. The running `npm run worker` must be **restarted** to load changes. **Still unproven
+live:** the inbound side (reply → poller → classifier → opportunity → brief → ship → delivery).
 
-### ▶ START HERE (next chat): continue the staging rehearsal
+### ▶ START HERE (next chat): build automatic lead sourcing
 
-The previous IMMEDIATE step — **drop the `info@<domain>` guess + don't analyze
-un-emailable leads** — is **DONE** (2026-06-20, uncommitted on `main`, 236 tests green,
-typecheck clean, demo 0 dead-letter). See "No-guess email gate + deferred Lighthouse"
-below. Next up:
+**The active build is automatic lead sourcing.** Read the spec
+`docs/superpowers/specs/2026-06-21-lead-sourcing-design.md` and execute the plan
+`docs/superpowers/plans/2026-06-21-lead-sourcing.md` **task-by-task** (9 TDD tasks; use
+executing-plans or subagent-driven-development). One-click batch sourcing by city + niche via
+Google Places API (New, `/v1` searchText), `ACTIVATE_NEW_LEAD_SOURCE`-gated, stops at a target
+(qualified = drafted email & score > 35) or a candidate cap (default 40); self-re-enqueuing
+`lead.source` controller + `SourcingRun` record; ~30 new niches via a single `NICHE_META`
+source of truth; no phone collected. Mock-first (suite stays green with zero keys); run
+`compliance-reviewer` at Task 9. Owner said: compact, then "keep building."
 
-- **Re-run `compliance-reviewer`** on the live text→/image→prompt behavior (mandatory
-  before the first live send — covers screenshots-as-untrusted-DATA vision call + live
-  crawled page content). This change is conservative (we now contact FEWER addresses,
-  never a guessed one) but a review pass is still owed before going outbound.
-- Continue the staging rehearsal to the gated side-effects, then the "⚠️ Before going
-  LIVE" checklist.
+Other open threads (lower priority while sourcing is the focus):
+- **Watch Monday's sends + the reply path** — confirm a real reply flows through the poller →
+  classifier → opportunity. First validation of the inbound side.
+- **Deeper email discovery** (mailto/JSON-LD priority + Cloudflare decode) for JS-rendered
+  sites — raises the sourcing hit-rate. Flagged, not built.
+- Real Vercel git-source deploy for `site.ship`; Stripe test-mode end-to-end; then the
+  "⚠️ Before going LIVE" checklist.
 
-### Email blacklist + Lighthouse-gated slow claim + no-URL outreach — 2026-06-21 (uncommitted on `main`)
+### Email blacklist + Lighthouse-gated slow claim + no-URL outreach — 2026-06-21 (committed `726d32d`/`35bee7d`)
 
 Owner-reported fixes (mock-first, 242 tests green, typecheck clean, demo 0 dead-letter):
 
@@ -58,7 +63,7 @@ Owner-reported fixes (mock-first, 242 tests green, typecheck clean, demo 0 dead-
 ⚠️ **Outreach content changed → `compliance-reviewer` is owed** before the next outbound
 send (it's a mandatory-review trigger: outreach copy + `validateDraft`).
 
-### No-guess email gate + deferred Lighthouse — 2026-06-20 (uncommitted on `main`)
+### No-guess email gate + deferred Lighthouse — 2026-06-20 (committed `726d32d`)
 
 Owner-specified. Two linked changes (mock-first, 236 tests green):
 
