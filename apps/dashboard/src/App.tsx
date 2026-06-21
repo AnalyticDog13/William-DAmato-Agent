@@ -8,6 +8,7 @@ import { LeadDetail } from "./pages/LeadDetail";
 import { Policies } from "./pages/Policies";
 import { Experiments } from "./pages/Experiments";
 import { WebsiteBriefs } from "./pages/WebsiteBriefs";
+import { SourcingPage } from "./pages/SourcingPage";
 import { CollectionPage, type Section } from "./pages/CollectionPage";
 
 interface NavEntry {
@@ -23,6 +24,7 @@ const NAV: NavEntry[] = [
   { path: "/", label: "Overview" },
   { path: "/review-queue", label: "Review Queue" },
   { path: "/leads", label: "Leads", group: "Pipeline" },
+  { path: "/sourcing", label: "Source leads" },
   { path: "/audits", label: "Audits", sections: [{ title: "Website Audits", collection: "audits", columns: ["leadId", "mode", "auditScore", "summary"] }] },
   { path: "/outreach", label: "Outreach", sections: [
     { title: "Drafts", collection: "outreach-drafts", columns: ["leadId", "status", "subject", "variant"] },
@@ -137,6 +139,7 @@ export function App() {
           <Route path="/policies" element={<Policies />} />
           <Route path="/experiments" element={<Experiments />} />
           <Route path="/website-briefs" element={<WebsiteBriefs />} />
+          <Route path="/sourcing" element={<SourcingPage />} />
           {NAV.filter((n) => n.sections).map((n) => (
             <Route key={n.path} path={n.path} element={<CollectionPage title={n.label} sections={n.sections!} builderGated={n.builderGated} />} />
           ))}
