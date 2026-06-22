@@ -7,14 +7,14 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a reply
 > doesn't open with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-22.
+**Last updated:** 2026-06-22 (mobile audit-screenshot fidelity fix).
 
 ## TL;DR
 
 The platform is **feature-complete and built mock-first, end to end** — it sources leads,
 audits them, finds + ranks emails, scores, drafts outreach, takes owner approval, sends,
 classifies replies, opens opportunities, generates a website brief, ships the owner-built
-site, and drafts the delivery + billing. `npm test` = **280 green**, `npm run typecheck`
+site, and drafts the delivery + billing. `npm test` = **281 green**, `npm run typecheck`
 clean, `npm run demo` 0 dead-letter (on a clean db), and every sensitive change has passed
 `compliance-reviewer`. Everything runs behind policy gates; **local is always dry-run**.
 
@@ -123,6 +123,20 @@ policy-gate approvals in the dashboard**, `npm test` green + DNC lists loaded. R
 
 ## Recent sessions (most recent first)
 
+- **2026-06-22** — **Mobile audit-screenshot fidelity fix** (UNCOMMITTED on `main`). Owner
+  reported the dashboard's mobile preview didn't match a real phone. Root cause: the "mobile"
+  audit shot was a DESKTOP-loaded page resized via `setViewportSize()` to a narrow width —
+  which never enables Chromium's `isMobile`, so `<meta viewport>` is ignored and the page
+  renders as a 390px-wide *desktop*, not a phone (no retina DPR, no mobile UA, no re-settle).
+  That PNG feeds `llm.scoreVisualDesign` (→ bidirectional lead score) and the outreach "finding"
+  → a backend bug that mis-scores leads and can seed a false "doesn't work on mobile" claim, not
+  a display bug (the dashboard `<img>` renders the PNG faithfully). Fix: mobile shot now taken on
+  a DEDICATED device-emulated page (`isMobile/hasTouch/deviceScaleFactor:3/iPhone UA`, 390×844)
+  that navigates FRESH with the same `networkidle`+settle the desktop shot uses; same fix applied
+  to `qualityCheckPreview` (disabled self-builder). `browser.ts` gained `NewPageOptions`. TDD
+  (failing test first), **281 tests green**, typecheck clean, demo 0 dead-letter,
+  `compliance-reviewer` **8/8 PASS** (advisory: confirm the mobile PNG visibly differs from
+  desktop on the first real staging audit). **Restart `npm run worker` to load it.**
 - **2026-06-22** — Email ranking (`bestBusinessEmail`) + telemetry suffix-blacklist
   (`sentry.wixpress.com` killed) + reject→draft status. `fab3695`. 280 tests, compliance PASS.
 - **2026-06-21** — Automatic lead sourcing built (Google Places New v1, `lead.source`

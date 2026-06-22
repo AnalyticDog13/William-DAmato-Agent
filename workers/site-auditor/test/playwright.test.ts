@@ -90,6 +90,68 @@ describe("playwright auditor mode", () => {
     expect(existsSync(page.mobileScreenshotPath!)).toBe(true);
   });
 
+  it("captures the mobile screenshot from a fresh mobile-emulated page, not a desktop resize", async () => {
+    // A real phone honors <meta viewport> only under device emulation (isMobile),
+    // and lays out from first paint at mobile width. Resizing an already-loaded
+    // desktop page (setViewportSize) does neither → the capture diverges from a
+    // real phone and feeds a false visual verdict + outreach claim. So the mobile
+    // shot MUST come from a dedicated mobile-emulated page that navigates fresh.
+    const newPageOpts: Array<Record<string, unknown> | undefined> = [];
+    const gotoByPage: number[] = [];
+    let resizeCalls = 0;
+
+    function recordingBrowser(): MinimalBrowser {
+      let pageIndex = -1;
+      return {
+        newPage: async (opts) => {
+          const myIndex = ++pageIndex;
+          newPageOpts.push(opts as Record<string, unknown> | undefined);
+          gotoByPage[myIndex] = 0;
+          const page: MinimalPage = {
+            url: () => "https://fake-biz.example.com/",
+            goto: async () => {
+              gotoByPage[myIndex]!++;
+              return undefined;
+            },
+            waitForLoadState: async () => undefined,
+            waitForTimeout: async () => undefined,
+            title: async () => "Fake Biz",
+            content: async () => PAGE_HTML,
+            setViewportSize: async () => {
+              resizeCalls++;
+            },
+            screenshot: async ({ path }) => writeFileSync(path, "fake-png"),
+            addScriptTag: async () => undefined,
+            evaluate: async <T>() => ({ violations: [] }) as T,
+            close: async () => undefined,
+          };
+          return page;
+        },
+        close: async () => undefined,
+      };
+    }
+
+    const audit = await auditWebsite(lead, {
+      mode: "playwright",
+      log,
+      ticket,
+      fetchImpl: fakeFetch,
+      dataDir: mkdtempSync(join(tmpdir(), "waud-")),
+      launchBrowser: async () => recordingBrowser(),
+      lighthouseRunner: async () => null,
+    });
+
+    // A dedicated mobile page was created with real device emulation at mobile width...
+    const mobileIndex = newPageOpts.findIndex((o) => o?.isMobile === true);
+    expect(mobileIndex).toBeGreaterThanOrEqual(0);
+    expect(newPageOpts[mobileIndex]!.viewport).toMatchObject({ width: 390 });
+    // ...and it navigated fresh (its own goto), so it renders AS a phone, not a resized desktop.
+    expect(gotoByPage[mobileIndex]).toBeGreaterThanOrEqual(1);
+    // The mobile capture must NOT be produced by resizing the desktop page.
+    expect(resizeCalls).toBe(0);
+    expect(existsSync(audit.pages[0]!.mobileScreenshotPath!)).toBe(true);
+  });
+
   it("respects robots.txt in playwright mode", async () => {
     const blockingFetch = (async (input: string | URL | Request) => {
       if (String(input).endsWith("/robots.txt"))

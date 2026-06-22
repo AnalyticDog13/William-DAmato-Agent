@@ -643,6 +643,40 @@ William now sources qualified leads automatically instead of the owner hand-ente
   `places:searchText` response shape (`nextPageToken` field name + that pagination terminates) and
   re-run `compliance-reviewer` on the live text→data path (sourced business strings stay DATA).
 
+### Done (Mobile audit-screenshot fidelity — real device emulation, 281 tests green)
+
+**Owner-reported, 2026-06-22; UNCOMMITTED on `main`.** Trigger: the dashboard's mobile audit
+preview didn't match what the owner saw opening the site on a real phone. **Diagnosis: a backend
+bug costing leads, not a display issue.** The dashboard renders the PNG faithfully
+(`LeadDetail.tsx` plain `<img maxWidth:100%>`); the *screenshot itself* was a bad mobile render.
+Root cause (`workers/site-auditor/src/playwright-audit.ts`): the "mobile" shot loaded the page at
+DESKTOP viewport, then `page.setViewportSize(390×844)` and screenshotted — a width-only resize
+that **never enables Chromium's `isMobile`**, so `<meta name="viewport">` is ignored and the page
+renders as a *narrow desktop window*, not a phone (also no retina `deviceScaleFactor`, no mobile
+`userAgent`, no re-settle after resize). That mobile PNG is sent (with desktop) into
+`llm.scoreVisualDesign` → `VisualAssessment` feeds `scoreLead` **bidirectionally** (weak floors to
+warm, strong caps to skip) AND is referenced as an outreach "finding" → mis-scored leads + a
+possible false "your site doesn't work on mobile" claim. (`mobileFriendly` is from
+`signals.hasViewportMeta`, NOT the screenshot — unaffected.)
+
+- **Fix:** the mobile shot is taken on a **dedicated device-emulated page** (`MOBILE_EMULATION`:
+  `viewport 390×844`, `isMobile:true`, `hasTouch:true`, `deviceScaleFactor:3`, iPhone `userAgent`)
+  that **navigates fresh** to the same already-robots-cleared URL, with the same bounded
+  `networkidle`(8s)+800ms `settle()` the desktop shot uses (extracted to a shared helper). The
+  desktop page now stays at desktop viewport through axe/Lighthouse (previously it ran them at the
+  resized mobile viewport). Same fix applied to `qualityCheckPreview` (the disabled self-builder's
+  preview check). `browser.ts` gained a `NewPageOptions` type carrying the emulation fields
+  (Playwright's `browser.newPage` applies them at the implicit context; Chromium-only — the browser
+  we launch). `setViewportSize` stays in `MinimalPage` (still used by `email-crawl.ts`).
+- **TDD** (failing test first: asserts a dedicated `isMobile:true` mobile-width page navigates
+  fresh and `setViewportSize` is never called for the capture). **281 tests green**, typecheck
+  clean, demo 0 dead-letter. **`compliance-reviewer` 8/8 PASS** (no required fixes; INFO advisory:
+  on the first real staging playwright audit, confirm the mobile PNG visibly differs from the
+  desktop PNG — folds into the already-mandated activation-time image→prompt re-review).
+- **Restart `npm run worker` + `npm run dev:api` to load it.** Real effect only shows in
+  `AUDITOR_MODE=playwright` (staging); local/mock/http never capture screenshots, so dry-run
+  behavior is unchanged.
+
 ### Done (Email ranking + telemetry suffix-blacklist + reject→draft, 280 tests green)
 
 **Owner-reported, 2026-06-22; committed + pushed `fab3695`.** Trigger: easlandscaping.com got
@@ -670,9 +704,10 @@ TDD + mock-first (280 tests green, typecheck clean, demo 0 dead-letter on a clea
 
 **Where we are (2026-06-22):** the platform is feature-complete and built mock-first end to end.
 Automatic lead sourcing (Google Places) and the email-ranking / suffix-blacklist / reject→draft
-fixes are **DONE, committed + pushed** on `main` (latest `fab3695`); `npm test` **280 green**,
-typecheck clean, `npm run demo` 0 dead-letter (on a clean db), `compliance-reviewer` PASS on every
-sensitive delta. **First real outbound has happened** (two leads queued to the live Instantly
+fixes are **DONE, committed + pushed** on `main` (latest `fab3695`); the mobile audit-screenshot
+fidelity fix is **DONE but UNCOMMITTED** on `main`. `npm test` **281 green**, typecheck clean,
+`npm run demo` 0 dead-letter (on a clean db), `compliance-reviewer` PASS on every sensitive delta.
+**First real outbound has happened** (two leads queued to the live Instantly
 campaign, weekdays-only). **Restart `npm run worker` + `npm run dev:api` to load the latest code.**
 The remaining work is (1) a few real builds, (2) proving live paths that have only run on mocks,
 (3) the go-live checklist.

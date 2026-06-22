@@ -21,8 +21,23 @@ export interface MinimalPage {
   close(): Promise<void>;
 }
 
+/**
+ * Page/context creation options. Beyond `viewport`, the mobile-emulation fields
+ * (`isMobile`/`hasTouch`/`deviceScaleFactor`/`userAgent`) make Chromium render a
+ * page the way a real phone does — most importantly `isMobile` is what makes the
+ * `<meta name="viewport">` tag take effect. Playwright's `browser.newPage` accepts
+ * all of these (they are Chromium-only, which is the browser we launch).
+ */
+export interface NewPageOptions {
+  viewport?: { width: number; height: number };
+  isMobile?: boolean;
+  hasTouch?: boolean;
+  deviceScaleFactor?: number;
+  userAgent?: string;
+}
+
 export interface MinimalBrowser {
-  newPage(opts?: { viewport?: { width: number; height: number } }): Promise<MinimalPage>;
+  newPage(opts?: NewPageOptions): Promise<MinimalPage>;
   close(): Promise<void>;
 }
 

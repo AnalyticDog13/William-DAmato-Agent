@@ -27,6 +27,40 @@ const DESKTOP_VIEWPORT = { width: 1366, height: 900 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
 /**
+ * iPhone-class mobile emulation. `isMobile` is the load-bearing flag — it's what
+ * makes Chromium honor the `<meta name="viewport">` tag, so a mobile-first
+ * responsive site lays out as a phone instead of as a 390px-wide desktop window.
+ * The retina `deviceScaleFactor`, touch, and mobile `userAgent` further match a
+ * real device (retina assets, no UA-sniff fallthrough). This is why the mobile
+ * shot is taken on a DEDICATED page that navigates fresh — resizing an
+ * already-loaded desktop page cannot turn `isMobile` on and never re-lays-out as
+ * a phone, which is what made the dashboard preview diverge from a real phone.
+ */
+const MOBILE_EMULATION = {
+  viewport: MOBILE_VIEWPORT,
+  isMobile: true,
+  hasTouch: true,
+  deviceScaleFactor: 3,
+  userAgent:
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+};
+
+/**
+ * Let lazy-loaded / slow / JS-injected imagery settle before screenshot + content
+ * read, so the capture reflects what a real visitor sees (avoids a false "no hero
+ * image" when it loads a few seconds late). Bounded so a site with persistent
+ * connections can't hang the audit.
+ */
+async function settle(page: MinimalPage): Promise<void> {
+  try {
+    await page.waitForLoadState?.("networkidle", { timeout: 8_000 });
+  } catch {
+    /* networkidle never reached (persistent connection) — proceed with what's painted */
+  }
+  await page.waitForTimeout?.(800); // final settle for fade-in / late paint
+}
+
+/**
  * Browser-grade audit: real Chromium render, desktop+mobile screenshots,
  * Lighthouse scores, axe-core accessibility scan. Returns null on any
  * browser-level failure so the caller can fall back to http mode.
@@ -45,19 +79,10 @@ export async function playwrightAudit(
     const page = await browser.newPage({ viewport: DESKTOP_VIEWPORT });
     const started = Date.now();
     await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+    // `loadMs` is measured off the load event BEFORE the settle wait, so the
+    // "slow load" finding stays based on real load time, not the settle.
     const loadMs = Date.now() - started;
-    // Let lazy-loaded / slow / JS-injected imagery settle BEFORE we screenshot
-    // and read content, so the capture + extracted signals reflect what a real
-    // visitor sees (avoids a false "no hero image" when it loads a few seconds
-    // late). Bounded so a site with persistent connections can't hang the audit.
-    // `loadMs` is already measured off the load event, so the "slow load"
-    // finding stays based on real load time, not this settle wait.
-    try {
-      await page.waitForLoadState?.("networkidle", { timeout: 8_000 });
-    } catch {
-      /* networkidle never reached (persistent connection) — proceed with what's painted */
-    }
-    await page.waitForTimeout?.(800); // final settle for fade-in / late paint
+    await settle(page);
     const title = await page.title();
     const html = await page.content();
     const finalUrl = page.url() || url;
@@ -67,8 +92,19 @@ export async function playwrightAudit(
     const screenshotPath = join(shotDir, "home-desktop.png");
     const mobileScreenshotPath = join(shotDir, "home-mobile.png");
     await page.screenshot({ path: screenshotPath, fullPage: false });
-    await page.setViewportSize(MOBILE_VIEWPORT);
-    await page.screenshot({ path: mobileScreenshotPath, fullPage: false });
+
+    // Mobile shot on a DEDICATED, device-emulated page that navigates fresh, so
+    // the homepage lays out as a phone from first paint (see MOBILE_EMULATION).
+    // A desktop page resized to a narrow viewport does not honor <meta viewport>
+    // → a false mobile render that feeds the vision score + outreach claim.
+    const mobilePage = await browser.newPage(MOBILE_EMULATION);
+    try {
+      await mobilePage.goto(url, { waitUntil: "load", timeout: 30_000 });
+      await settle(mobilePage);
+      await mobilePage.screenshot({ path: mobileScreenshotPath, fullPage: false });
+    } finally {
+      await mobilePage.close().catch(() => {});
+    }
 
     const a11yFindings = await runAxe(page, deps.log);
     const lighthouse = deps.skipLighthouse
@@ -240,8 +276,16 @@ export async function qualityCheckPreview(opts: {
     const desktopPath = join(opts.outDir, "preview-desktop.png");
     const mobilePath = join(opts.outDir, "preview-mobile.png");
     await page.screenshot({ path: desktopPath, fullPage: true });
-    await page.setViewportSize(MOBILE_VIEWPORT);
-    await page.screenshot({ path: mobilePath, fullPage: true });
+
+    // Mobile preview on a fresh device-emulated page (see MOBILE_EMULATION) — not
+    // a desktop resize, so the preview matches what a phone renders.
+    const mobilePage = await browser.newPage(MOBILE_EMULATION);
+    try {
+      await mobilePage.goto(url, { waitUntil: "load", timeout: 30_000 });
+      await mobilePage.screenshot({ path: mobilePath, fullPage: true });
+    } finally {
+      await mobilePage.close().catch(() => {});
+    }
 
     const a11yFindings = await runAxe(page, opts.log);
     const lighthouse = await (opts.lighthouseRunner ?? runLighthouse)(url, cdpPort, opts.log);
