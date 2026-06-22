@@ -643,36 +643,81 @@ William now sources qualified leads automatically instead of the owner hand-ente
   `places:searchText` response shape (`nextPageToken` field name + that pagination terminates) and
   re-run `compliance-reviewer` on the live text→data path (sourced business strings stay DATA).
 
-### NEXT STEPS (staging rehearsal underway — real-path fixes landed)
+### Done (Email ranking + telemetry suffix-blacklist + reject→draft, 280 tests green)
 
-**Where we are (2026-06-21):** staging rehearsal is underway and **the first real
-outbound has happened** — two leads approved + pushed to the live Instantly campaign
-(queued; they send Monday — the campaign sends weekdays only). All the staging-rehearsal
-+ email-gate + blacklist + Lighthouse-gated-slow + no-URL-outreach work is **COMMITTED +
-PUSHED** on `main` (`5cd2a2f` → `726d32d` → `35bee7d`; 242 tests green, typecheck clean,
-demo 0 dead-letter, `compliance-reviewer` 8/8 PASS on the outreach delta). The running
-worker must be restarted to pick up changes. **Still unproven live:** the inbound side —
-a real reply through the poller → classifier → opportunity → brief → ship → delivery.
+**Owner-reported, 2026-06-22; committed + pushed `fab3695`.** Trigger: easlandscaping.com got
+an email that wasn't even on the site while real service contacts were missed. Three fixes,
+TDD + mock-first (280 tests green, typecheck clean, demo 0 dead-letter on a clean db,
+`compliance-reviewer` PASS).
 
-**✅ DONE — automatic lead sourcing (263 tests green, compliance PASS).** Spec:
-`docs/superpowers/specs/2026-06-21-lead-sourcing-design.md`; plan:
-`docs/superpowers/plans/2026-06-21-lead-sourcing.md`. Built via subagent-driven TDD,
-mock-first (suite + demo green with zero keys). Full summary in the "Done (automatic lead
-sourcing)" section below. One-click batch sources by city + niche via Google Places API
-(New, `/v1` searchText), gated by `ACTIVATE_NEW_LEAD_SOURCE`, stops at a target (qualified =
-drafted email & score > 35) or a candidate cap (default 40); self-re-enqueuing `lead.source`
-controller + `SourcingRun` record; ~30 niches via a single `NICHE_META` source of truth; no
-phone collected. **`compliance-reviewer` PASS (all invariants).** ⚠️ **Activation-time
-re-review still owed** (advisory I2): confirm the live `places:searchText` response shape
-(`nextPageToken` field name + pagination termination) in staging before the first real
-sourcing run — the real Places path has never executed (still local/dry-run).
+- **Ranked email picker** (`bestBusinessEmail` + `isTopTierContact` in `packages/core/src/email.ts`)
+  replaces "first non-placeholder wins". Tiers: role@own-domain > any@own-domain >
+  company-named@free-provider > role@other > other; no-reply/system demoted; placeholders excluded;
+  lenient fallback to best-available (company-named match is full-token OR short prefix abbreviation
+  — `eas@` for "EAS Landscaping" — never an arbitrary substring). Wired into `handleContact` (homepage
+  pass still crawls when its hit isn't a role@own-domain, so junk can't shadow a real `/contact`
+  address) and `crawlForEmail` (now ranks across ALL pages, not first-match-per-page). Systematic
+  cause: nothing ranked — first email in source order won, and the crawl scanned raw HTML so
+  hidden/3rd-party addresses leaked.
+- **Suffix-matching blacklist** — `isPlaceholderEmail` exact-matches `PLACEHOLDER_DOMAINS` AND
+  suffix-matches a new `PLACEHOLDER_DOMAIN_SUFFIXES` set (`wixpress.com`, `sentry.io`) → kills
+  `sentry.wixpress.com` and any `*.wixpress.com`/`*.sentry.io` (no more whack-a-mole). The split keeps
+  the suite's `*.example.com` fixtures (exact-only) resolving as real.
+- **Reject → draft status** — the decide route sets the `OutreachDraft` to `"rejected"` when a
+  `SEND_FIRST_TOUCH` draft is rejected (was staying `pending_approval`); lead status untouched.
 
-**What's working right now:** the full DRY-RUN pipeline end-to-end — intake → audit →
-**email gate/staged discovery** → score (**+ visual score when screenshots exist**) →
-draft → approval → simulated send → reply → opportunity → brief → ship draft →
-delivery. Adapters pick real-vs-mock by credential presence; the dashboard renders the
-visual assessment; the policy/compliance suite is green. **Nothing outbound has
-happened yet** (no real send, scrape, vision call, crawl, or payment).
+### NEXT STEPS
+
+**Where we are (2026-06-22):** the platform is feature-complete and built mock-first end to end.
+Automatic lead sourcing (Google Places) and the email-ranking / suffix-blacklist / reject→draft
+fixes are **DONE, committed + pushed** on `main` (latest `fab3695`); `npm test` **280 green**,
+typecheck clean, `npm run demo` 0 dead-letter (on a clean db), `compliance-reviewer` PASS on every
+sensitive delta. **First real outbound has happened** (two leads queued to the live Instantly
+campaign, weekdays-only). **Restart `npm run worker` + `npm run dev:api` to load the latest code.**
+The remaining work is (1) a few real builds, (2) proving live paths that have only run on mocks,
+(3) the go-live checklist.
+
+**WORKING (mock-first, zero credentials):** the full pipeline — intake / **source (Google Places)**
+→ audit → **email gate + ranked discovery** → score (+ visual when screenshots exist) → draft →
+owner approval → (simulated) send → reply classify → opportunity → WebsiteBrief → ship (simulated
+prod deploy) → delivery draft → billing draft → (simulated) payment link → daily/weekly reports.
+DNC/unsubscribe screened at intake/draft/send; gates + compliance suite green.
+
+**NEXT to BUILD (new code), priority order:**
+1. **Deeper email discovery (recommended)** — mailto/JSON-LD priority + Cloudflare
+   email-obfuscation decode for JS-rendered sites where the real address isn't in static text.
+   Compounds the new ranking; biggest sourcing-hit-rate lever (the standing "still owed" item).
+2. **Real enrichment + deliverability verifier** — enrichment returns `[]` today (no guessing) and
+   "verify" only checks format; wire `ENRICHMENT_API_KEY`/`EMAIL_VERIFY_API_KEY` to unblock no-email
+   leads + confirm deliverability. Compliance review required.
+3. **Real Vercel git-source deploy for `site.ship`** — currently dry-runs the repo URL; needs
+   git-source wiring (OwnerRequest exists). Verify Vercel `framework:"vite"` + Instantly `pauseLead`.
+4. **Sourcing autopilot top-up** — auto-maintain N qualified leads on the `lead.source` controller
+   (spec lists it as future). Optional.
+5. **Free-text revision interpretation** — dormant while `WILLIAM_BUILDS_WEBSITES=false`; build when
+   re-enabling the self-builder. Compliance review required.
+
+**LEFT UNDONE (built, never proven on real paths):**
+- **Inbound loop** — a real reply → Instantly poller → classifier → opportunity → brief → ship →
+  delivery has never run live. Watch the Monday sends.
+- **First real Google Places run** — confirm the live `searchText` shape + pagination, then the
+  **mandatory `compliance-reviewer` re-review on the live text→/image→prompt behavior** (advisory I2)
+  before the first live send.
+- **Stripe test-mode end-to-end** — payment link/invoice + webhook via the `stripe listen` secret.
+
+**NEEDS FIXING / gotchas:**
+- **Restart worker/API after any code change** — running processes hold old code.
+- **`npm run demo` + a running worker:** the worker locks `./data/william.db`, so the demo can't reset
+  it and silently reuses a stale db ("0 created" → "already granted"). Stop the worker or run
+  `DATA_DIR=./data-demo-clean npm run demo`. Not a code bug.
+- **Stray `ANTHROPIC_MODEL=claude-opus-4-8` in `.env`** overrides the Haiku default for
+  reply-classify/transcripts — unset unless Opus is intended.
+- **Outreach advisory A1** — dedupe a fuzzy near-duplicate opt-out line in `applyOpusCopy`; low
+  priority, can't occur locally.
+
+**Before production:** work the **"⚠️ Before going LIVE" checklist** above the Status section.
+
+The detailed staging→activation sequence and dated history follow below.
 
 **✅ DONE (owner-reported, 2026-06-21) — placeholder blacklist + Lighthouse-gated slow claim
 + no-URL outreach.** Committed + pushed (`726d32d`, blacklist add `35bee7d`); 242 tests
