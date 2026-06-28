@@ -34,16 +34,9 @@ export type ComplianceEvent = z.infer<typeof ComplianceEvent>;
 export const IntegrationCredentialStatus = BaseEntity.extend({
   integration: z.enum([
     "instantly",
-    "gmail",
-    "stripe",
-    "vercel",
-    "github",
     "google_maps",
     "enrichment",
     "email_verify",
-    "calendar",
-    "higgsfield",
-    "firecrawl",
     "anthropic",
   ]),
   mode: z.enum(["missing", "sandbox", "live"]),
@@ -54,7 +47,7 @@ export const IntegrationCredentialStatus = BaseEntity.extend({
 export type IntegrationCredentialStatus = z.infer<typeof IntegrationCredentialStatus>;
 
 export const WebhookEventRecord = BaseEntity.extend({
-  provider: z.enum(["instantly", "stripe", "vercel", "other"]),
+  provider: z.enum(["instantly", "other"]),
   eventType: z.string(),
   signatureValid: z.boolean().nullable(),
   payload: z.string(),

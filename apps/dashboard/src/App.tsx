@@ -14,8 +14,6 @@ interface NavEntry {
   label: string;
   sections?: Section[];
   group?: string;
-  /** Site Projects shows a "builder disabled" banner while WILLIAM_BUILDS_WEBSITES is off. */
-  builderGated?: boolean;
 }
 
 const NAV: NavEntry[] = [
@@ -116,7 +114,7 @@ export function App() {
           <Route path="/policies" element={<Policies />} />
           <Route path="/sourcing" element={<SourcingPage />} />
           {NAV.filter((n) => n.sections).map((n) => (
-            <Route key={n.path} path={n.path} element={<CollectionPage title={n.label} sections={n.sections!} builderGated={n.builderGated} />} />
+            <Route key={n.path} path={n.path} element={<CollectionPage title={n.label} sections={n.sections!} />} />
           ))}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

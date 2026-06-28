@@ -28,16 +28,6 @@ describe("loadConfig flags", () => {
     expect(loadConfig({ WILLIAM_ENV: "local", DRY_RUN: "false" }).dryRun).toBe(true);
   });
 
-  it("williamBuildsWebsites defaults to false (William is the business head, not the builder)", () => {
-    expect(loadConfig({}).williamBuildsWebsites).toBe(false);
-  });
-
-  it("WILLIAM_BUILDS_WEBSITES=true re-enables the builder; anything else stays false", () => {
-    expect(loadConfig({ WILLIAM_BUILDS_WEBSITES: "true" }).williamBuildsWebsites).toBe(true);
-    expect(loadConfig({ WILLIAM_BUILDS_WEBSITES: "false" }).williamBuildsWebsites).toBe(false);
-    expect(loadConfig({ WILLIAM_BUILDS_WEBSITES: "1" }).williamBuildsWebsites).toBe(false);
-  });
-
   it("parses INSTANTLY_POLL_INTERVAL_MS (default 0 = disabled, rejects garbage)", () => {
     expect(loadConfig({ WILLIAM_ENV: "local" }).instantlyPollIntervalMs).toBe(0);
     expect(loadConfig({ WILLIAM_ENV: "staging", INSTANTLY_POLL_INTERVAL_MS: "300000" }).instantlyPollIntervalMs).toBe(300000);

@@ -11,21 +11,11 @@ export function ensureBootstrapOwnerRequests(ctx: AppContext): void {
 
   if (missing.has("instantly")) {
     ctx.memory.requestFromOwner({
-      title: "Provide Instantly API v2 key + webhook secret",
-      whyItMatters: "Outreach sends and reply/bounce/unsubscribe webhooks all flow through Instantly. Without it, approved drafts stop at dry-run.",
-      neededFields: ["INSTANTLY_API_KEY", "INSTANTLY_WEBHOOK_SECRET", "campaign ID for first-touch sequence"],
+      title: "Provide Instantly API v2 key + campaign ID",
+      whyItMatters: "Outreach sends and reply polling all flow through Instantly. Without it, approved drafts stop at dry-run.",
+      neededFields: ["INSTANTLY_API_KEY", "INSTANTLY_CAMPAIGN_ID"],
       credentialKind: "live",
-      unblocks: ["real first-touch sends after approval", "reply detection", "campaign sync status"],
-      category: "credentials",
-    });
-  }
-  if (missing.has("gmail")) {
-    ctx.memory.requestFromOwner({
-      title: "Authorize Gmail API OAuth for will@williamdamato.com",
-      whyItMatters: "Direct-send fallback and mailbox-level reply ingestion need Gmail API OAuth (client id/secret + refresh token).",
-      neededFields: ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"],
-      credentialKind: "live",
-      unblocks: ["direct email fallback", "thread-level reply context", "calendar free/busy for call suggestions"],
+      unblocks: ["real first-touch sends after approval", "reply detection via poller", "campaign sync status"],
       category: "credentials",
     });
   }
@@ -36,26 +26,6 @@ export function ensureBootstrapOwnerRequests(ctx: AppContext): void {
       neededFields: ["GOOGLE_MAPS_API_KEY (Places API enabled, billing on)"],
       credentialKind: "live",
       unblocks: ["automated lead discovery beyond CSV/manual entry"],
-      category: "credentials",
-    });
-  }
-  if (missing.has("stripe")) {
-    ctx.memory.requestFromOwner({
-      title: "Provide Stripe secret key + webhook secret (test mode first)",
-      whyItMatters: "Payment links/invoices stay simulated until Stripe credentials exist. Test-mode keys are enough to validate the full flow.",
-      neededFields: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
-      credentialKind: "sandbox",
-      unblocks: ["real (test-mode) payment links", "payment webhook state tracking"],
-      category: "credentials",
-    });
-  }
-  if (missing.has("vercel")) {
-    ctx.memory.requestFromOwner({
-      title: "Provide Vercel token (+ team id) for preview deployments",
-      whyItMatters: "Generated preview sites currently live as local files; a Vercel token turns them into shareable preview URLs.",
-      neededFields: ["VERCEL_TOKEN", "VERCEL_TEAM_ID (if team account)"],
-      credentialKind: "either",
-      unblocks: ["shareable preview URLs", "production deploys (still DEPLOY_PRODUCTION-gated)"],
       category: "credentials",
     });
   }
@@ -74,34 +44,24 @@ export function ensureBootstrapOwnerRequests(ctx: AppContext): void {
       category: "credentials",
     });
   }
-  if (missing.has("firecrawl")) {
+  if (missing.has("enrichment")) {
     ctx.memory.requestFromOwner({
-      title: "Provide Firecrawl API key for real company scraping",
-      whyItMatters: "Website briefs currently synthesize company facts from the audit. A Firecrawl key lets William scrape the lead's real site (services, hours, about, contact) for a richer, more accurate build prompt.",
-      neededFields: ["FIRECRAWL_API_KEY"],
+      title: "Provide enrichment provider API key (optional — widens email discovery)",
+      whyItMatters: "Leads with no published email on their website or subpages are disqualified today. An enrichment provider can surface a verified contact, recovering those leads.",
+      neededFields: ["ENRICHMENT_API_KEY"],
       credentialKind: "live",
-      unblocks: ["real scraped company facts in website briefs"],
+      unblocks: ["email discovery for leads with no published contact address"],
       category: "credentials",
     });
   }
-  if (missing.has("vercel")) {
+  if (missing.has("email_verify")) {
     ctx.memory.requestFromOwner({
-      title: "Enable Vercel repo/git-source deploy for shipping owner-built sites",
-      whyItMatters: "site.ship deploys the owner's finished repo. Real repo/git-source deploys (vs the current dry-run) need a Vercel token plus git-source configuration; until then shipping simulates.",
-      neededFields: ["VERCEL_TOKEN", "VERCEL_TEAM_ID (if team account)", "git source connected to Vercel for the repo"],
+      title: "Provide email verification API key (optional — confirms deliverability)",
+      whyItMatters: "The current email verifier checks format only. A real deliverability verifier confirms inbox existence before a send, reducing bounce rate.",
+      neededFields: ["EMAIL_VERIFY_API_KEY"],
       credentialKind: "live",
-      unblocks: ["real production deploy of the owner's finished website repo (site.ship)"],
+      unblocks: ["deliverability verification before first-touch send"],
       category: "credentials",
-    });
-  }
-  if (missing.has("higgsfield")) {
-    ctx.memory.requestFromOwner({
-      title: "Confirm Higgsfield MCP usage limits and allowed use",
-      whyItMatters: "The $60/mo plan is available, but William keeps Higgsfield in dry-run until credit limits and acceptable-use are confirmed to avoid burning plan credits.",
-      neededFields: ["confirmation of monthly credit budget for William", "HIGGSFIELD_ENABLED=true"],
-      credentialKind: "live",
-      unblocks: ["hero/mockup imagery for preview sites", "design-reference generation"],
-      category: "decision",
     });
   }
 }

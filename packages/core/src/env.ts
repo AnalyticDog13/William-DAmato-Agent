@@ -46,13 +46,6 @@ export interface RuntimeConfig {
   /** Minimum Lighthouse scores a generated preview must hit before owner review. */
   previewQuality: { minPerformance: number; minAccessibility: number };
   /**
-   * Off-switch for William's own website builder. Default false: William is the
-   * business head — he generates a WebsiteBrief (build prompt) for the owner and
-   * ships the owner's finished repo, but never builds/deploys his own artifact.
-   * Flip to true to restore the full self-build pipeline (preview/revise/deploy).
-   */
-  williamBuildsWebsites: boolean;
-  /**
    * How often (ms) to poll Instantly's /emails API for inbound replies, as a
    * free alternative to the Hypergrowth-gated webhook. 0 disables polling
    * (default). Inert in local (dry-run forces pollInbound to return []).
@@ -114,7 +107,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
       minPerformance: threshold(env.PREVIEW_MIN_PERFORMANCE, 70),
       minAccessibility: threshold(env.PREVIEW_MIN_ACCESSIBILITY, 80),
     },
-    williamBuildsWebsites: env.WILLIAM_BUILDS_WEBSITES === "true",
     instantlyPollIntervalMs: (() => {
       const n = Number(env.INSTANTLY_POLL_INTERVAL_MS);
       return Number.isFinite(n) && n > 0 ? n : 0;
