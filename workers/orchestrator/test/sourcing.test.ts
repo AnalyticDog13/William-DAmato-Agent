@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { newId, newTraceId, nowIso } from "@william/core";
+import { newId, newTraceId, nowIso, type Niche } from "@william/core";
 import {
   createContext,
   decideApproval,
@@ -422,6 +422,142 @@ describe("lead.source controller", () => {
     expect(after.candidatesIngested).toBeGreaterThanOrEqual(2);
     // Confirm we actually fetched page 2 (i.e. sourcing advanced past page 1).
     expect(callCount).toBeGreaterThanOrEqual(2);
+  });
+
+  // ─── Batch mode ──────────────────────────────────────────────────────────
+
+  /**
+   * Create a SourcingRun in batch mode with a granted ACTIVATE_NEW_LEAD_SOURCE
+   * approval. The first niche in `nicheQueue` is also used as `run.niche` (the
+   * base field); batch mode drives the sweep via nicheQueue / currentNiche.
+   */
+  function approvedBatchRun(
+    ctx: AppContext,
+    target: number,
+    cap: number,
+    nicheQueue: Niche[],
+    location = "Ithaca, NY",
+  ) {
+    const traceId = newTraceId();
+    const now = nowIso();
+    const run = ctx.store.sourcingRuns.insert({
+      id: newId("src"),
+      createdAt: now,
+      updatedAt: now,
+      location,
+      niche: (nicheQueue[0] ?? "coffee_shop") as Niche,
+      target,
+      candidateCap: cap,
+      status: "running",
+      candidatesIngested: 0,
+      qualifiedCount: 0,
+      leadIds: [],
+      nextPageToken: null,
+      checks: 0,
+      approvalRequestId: null,
+      resultNote: null,
+      traceId,
+      mode: "batch",
+      nicheQueue,
+      currentNiche: null,
+    });
+
+    const approval = requestApproval(ctx, {
+      gate: "ACTIVATE_NEW_LEAD_SOURCE",
+      subjectType: "SourcingRun",
+      subjectId: run.id,
+      title: "Source leads (batch)",
+      detail: `batch in ${location}`,
+      traceId,
+    });
+    decideApproval(ctx, approval.id, "granted", "test");
+
+    return run;
+  }
+
+  it("batch run: no early stop on qualified target; advances niche when a niche is exhausted", async () => {
+    // Niche A = coffee_shop: page 1 returns bb-coffee (bad=0 → qualifies), page 2 = empty (exhaust A).
+    // Niche B = hair_salon:  page 1 returns bb-salon  (bad=0 → qualifies), page 2 = empty (exhaust B).
+    //
+    // target=1 — in normal mode the run would stop ("completed") after bb-coffee qualifies.
+    // In batch mode the qualified-target stop is skipped; both niches are swept.
+    // Run ends "stopped_exhausted" (not "completed"), proving no early stop on target.
+    //
+    // Domains chosen for deterministic mock scores:
+    //   bb-coffee.example.com → sum(charCodes)=2016 → 2016%3=0 → bad=0 → high score ✓
+    //   bb-salon.example.com  → sum(charCodes)=1941 → 1941%3=0 → bad=0 → high score ✓
+    configureEnrichment(ctx, "sandbox");
+    ctx.integrations.enrichment.findContacts = async (_t, domain) => [
+      { email: `info@${domain}`, name: null, role: null, confidence: 0.8, provider: "stub" },
+    ];
+
+    ctx.integrations.places.searchBusinesses = async (_t, input) => {
+      if (input.query.includes("coffee shops")) {
+        return input.pageToken
+          ? { businesses: [], nextPageToken: null }
+          : {
+              businesses: [{
+                name: "BB Coffee", niche: "coffee_shop",
+                websiteUrl: "https://bb-coffee.example.com",
+                phone: null, address: null, city: "Ithaca", rating: 4,
+              }],
+              nextPageToken: "A-P2",
+            };
+      }
+      if (input.query.includes("hair salons")) {
+        return input.pageToken
+          ? { businesses: [], nextPageToken: null }
+          : {
+              businesses: [{
+                name: "BB Salon", niche: "hair_salon",
+                websiteUrl: "https://bb-salon.example.com",
+                phone: null, address: null, city: "Ithaca", rating: 4,
+              }],
+              nextPageToken: "B-P2",
+            };
+      }
+      return { businesses: [], nextPageToken: null };
+    };
+
+    const run = approvedBatchRun(ctx, 1, 10, ["coffee_shop", "hair_salon"] as Niche[]);
+    ctx.store.queue.enqueue({
+      type: "lead.source",
+      payload: { sourcingRunId: run.id },
+      traceId: run.traceId,
+    });
+
+    await runUntilEmpty(ctx, 500, futureClock);
+
+    const after = ctx.store.sourcingRuns.get(run.id)!;
+    // Both niches exhausted → stopped_exhausted (NOT "completed", which would mean early stop).
+    expect(after.status).toBe("stopped_exhausted");
+    // Both niches contributed at least one ingested lead.
+    expect(after.candidatesIngested).toBeGreaterThanOrEqual(2);
+  });
+
+  it("batch run stops at candidate cap", async () => {
+    // Places returns 2 businesses per call; cap=2, target=99.
+    // After the first page is ingested, candidatesIngested=2 >= cap=2 → stopped_cap on next tick.
+    ctx.integrations.places.searchBusinesses = async () => ({
+      businesses: [
+        { name: "Cap 1", niche: "coffee_shop", websiteUrl: "https://cap1.example.com", phone: null, address: null, city: "Ithaca", rating: 4 },
+        { name: "Cap 2", niche: "coffee_shop", websiteUrl: "https://cap2.example.com", phone: null, address: null, city: "Ithaca", rating: 4 },
+      ],
+      nextPageToken: null,
+    });
+
+    const run = approvedBatchRun(ctx, 99, 2, ["coffee_shop"] as Niche[]);
+    ctx.store.queue.enqueue({
+      type: "lead.source",
+      payload: { sourcingRunId: run.id },
+      traceId: run.traceId,
+    });
+
+    await runUntilEmpty(ctx, 500, futureClock);
+
+    const after = ctx.store.sourcingRuns.get(run.id)!;
+    expect(after.status).toBe("stopped_cap");
+    expect(after.candidatesIngested).toBe(2);
   });
 
   it("no-ops if the run is already completed when the job fires", async () => {

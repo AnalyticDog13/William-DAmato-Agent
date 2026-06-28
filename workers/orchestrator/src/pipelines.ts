@@ -553,6 +553,10 @@ const handleLeadSource: JobHandler = async (ctx, job) => {
     ctx.store.sourcingRuns.save({ ...fresh, status, resultNote: note, updatedAt: nowIso() });
   };
 
+  // Batch mode sweeps many niches up to the candidate cap; normal mode works
+  // toward a qualified-lead target within a single niche.
+  const sweeping = run.mode === "batch";
+
   // 1) Re-count qualified and increment the check counter.
   const qualifiedCount = countQualified(ctx, run.leadIds, ctx.config.outreachScoreThreshold);
   const checks = run.checks + 1;
@@ -562,7 +566,8 @@ const handleLeadSource: JobHandler = async (ctx, job) => {
   const updated = ctx.store.sourcingRuns.get(run.id)!;
 
   // 2) Stop conditions (checked in priority order).
-  if (qualifiedCount >= run.target) {
+  // Batch mode is cap-governed; the qualified-target stop is skipped.
+  if (!sweeping && qualifiedCount >= run.target) {
     stop("completed", `Found ${qualifiedCount} qualified lead(s).`);
     return;
   }
@@ -585,7 +590,13 @@ const handleLeadSource: JobHandler = async (ctx, job) => {
     return;
   }
 
-  // 4) Source the next page from Places (gated).
+  // 4) Determine the niche to query. In batch mode, sweep through nicheQueue;
+  //    currentNiche is set after the first niche is exhausted.
+  const niche = sweeping
+    ? (run.currentNiche ?? run.nicheQueue[0] ?? run.niche)
+    : run.niche;
+
+  // 5) Source the next page from Places (gated).
   const decision = evaluateGate(ctx, {
     gate: "ACTIVATE_NEW_LEAD_SOURCE",
     subjectType: "SourcingRun",
@@ -598,12 +609,30 @@ const handleLeadSource: JobHandler = async (ctx, job) => {
   }
 
   const page = await ctx.integrations.places.searchBusinesses(decision.ticket, {
-    query: nicheSearchQuery(run.niche, run.location),
+    query: nicheSearchQuery(niche, run.location),
     location: run.location,
     pageToken: updated.nextPageToken,
   });
 
   if (page.businesses.length === 0) {
+    if (sweeping) {
+      // This niche is exhausted — advance to the next one in the queue.
+      const rest = run.nicheQueue.filter((n) => n !== niche);
+      if (rest.length === 0) {
+        stop("stopped_exhausted", `Swept all niches — ${qualifiedCount} qualified, ${updated.candidatesIngested} ingested.`);
+        return;
+      }
+      ctx.store.sourcingRuns.save({
+        ...updated,
+        currentNiche: rest[0]!,
+        nicheQueue: rest,
+        nextPageToken: null,
+        checks,
+        updatedAt: nowIso(),
+      });
+      reEnqueue();
+      return;
+    }
     stop("stopped_exhausted", `No more results — found ${qualifiedCount} of ${run.target}.`);
     return;
   }
@@ -615,7 +644,7 @@ const handleLeadSource: JobHandler = async (ctx, job) => {
     const result = ingestLead(ctx, {
       companyName: biz.name,
       websiteUrl: biz.websiteUrl,
-      niche: run.niche,
+      niche,
       city: biz.city,
       source: {
         kind: "google_maps",
