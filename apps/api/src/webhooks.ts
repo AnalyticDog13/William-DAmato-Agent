@@ -1,5 +1,6 @@
 import { Router, raw } from "express";
 import { newId, newTraceId, nowIso } from "@william/core";
+import { hmacSignatureValid } from "@william/integrations";
 import type { AppContext } from "@william/worker-orchestrator";
 
 /**
@@ -108,9 +109,11 @@ function verifySignature(
   secret: string | undefined,
 ): { accept: boolean; signatureValid: boolean | null } {
   if (secret) {
-    // Verification is delegated to the ACTIVE adapter: mock = plain HMAC hex,
-    // real Stripe = t=...,v1=... scheme with replay protection.
-    const valid = ctx.integrations[provider].verifyWebhookSignature(rawBody, signature, secret);
+    // Verification: Instantly delegates to the active adapter (mock = HMAC hex;
+    // real = HMAC hex). Stripe no longer has a real adapter; use HMAC directly.
+    const valid = provider === "instantly"
+      ? ctx.integrations.instantly.verifyWebhookSignature(rawBody, signature, secret)
+      : hmacSignatureValid(rawBody, signature, secret);
     if (!valid) {
       ctx.store.writeCompliance("webhook_signature_invalid", `${provider} webhook rejected: bad/missing signature`, {});
     }
