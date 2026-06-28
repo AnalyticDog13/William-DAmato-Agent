@@ -71,6 +71,24 @@ describe("loadConfig flags", () => {
     expect(cfg.leadSourcing.defaultCandidateCap).toBe(40);
     expect(cfg.leadSourcing.recheckDelayMs).toBeGreaterThan(0);
   });
+
+  it("defaults outreachScoreThreshold to 45 and pushMode to review", () => {
+    const c = loadConfig({ WILLIAM_ENV: "local" } as NodeJS.ProcessEnv);
+    expect(c.outreachScoreThreshold).toBe(45);
+    expect(c.pushMode).toBe("review");
+  });
+
+  it("reads OUTREACH_SCORE_THRESHOLD and PUSH_MODE from env", () => {
+    const c = loadConfig({ WILLIAM_ENV: "staging", OUTREACH_SCORE_THRESHOLD: "60", PUSH_MODE: "auto" } as NodeJS.ProcessEnv);
+    expect(c.outreachScoreThreshold).toBe(60);
+    expect(c.pushMode).toBe("auto");
+  });
+
+  it("ignores an out-of-range or invalid threshold/push mode", () => {
+    const c = loadConfig({ WILLIAM_ENV: "staging", OUTREACH_SCORE_THRESHOLD: "999", PUSH_MODE: "banana" } as NodeJS.ProcessEnv);
+    expect(c.outreachScoreThreshold).toBe(45);
+    expect(c.pushMode).toBe("review");
+  });
 });
 
 describe("loadDotEnv", () => {

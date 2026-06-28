@@ -66,6 +66,10 @@ export interface RuntimeConfig {
   emailDiscovery: { subpaths: string[]; maxPages: number; pageTimeoutMs: number; budgetMs: number };
   /** Lead sourcing: Google Places API (v1) search budget and controller re-check interval. */
   leadSourcing: { defaultCandidateCap: number; recheckDelayMs: number };
+  /** Only sites scoring ABOVE this (0-100) get an outreach email. Higher score = worse site = better prospect. */
+  outreachScoreThreshold: number;
+  /** "review" = qualified leads wait for owner Approve & push; "auto" = push to Instantly automatically. */
+  pushMode: "review" | "auto";
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -130,5 +134,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig 
       defaultCandidateCap: posInt(env.LEAD_SOURCING_CANDIDATE_CAP, 40),
       recheckDelayMs: posInt(env.LEAD_SOURCING_RECHECK_MS, 30_000),
     },
+    outreachScoreThreshold: threshold(env.OUTREACH_SCORE_THRESHOLD, 45),
+    pushMode: env.PUSH_MODE === "auto" ? "auto" : "review",
   };
 }
