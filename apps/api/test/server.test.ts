@@ -1,4 +1,3 @@
-import { createHmac } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -66,14 +65,6 @@ describe("API auth (server-side, every route)", () => {
   });
 });
 
-
-describe("transcript ingestion API", () => {
-  it("rejects missing source/text and oversized payloads", async () => {
-    expect((await authed("/api/transcripts", { method: "POST", body: JSON.stringify({ source: "", text: "x" }) })).status).toBe(400);
-    expect((await authed("/api/transcripts", { method: "POST", body: JSON.stringify({ source: "a.txt", text: "" }) })).status).toBe(400);
-    expect((await authed("/api/transcripts", { method: "POST", body: JSON.stringify({ source: "a.txt", text: "x".repeat(100_001) }) })).status).toBe(400);
-  });
-});
 
 describe("lead + approval flow over HTTP", () => {
   it("creates a lead, runs the inline pipeline, exposes the review queue", async () => {
@@ -191,34 +182,3 @@ describe("sourcing-runs API", () => {
   });
 });
 
-describe("webhooks", () => {
-  it("accepts unsigned webhooks ONLY in local dry-run, recording a compliance event", async () => {
-    const res = await fetch(`${base}/webhooks/instantly`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ event_type: "campaign_completed" }),
-    });
-    expect(res.status).toBe(200);
-    expect(ctx.store.complianceEvents.list({ status: "webhook_unsigned_accepted_dry_run" }).length).toBeGreaterThan(0);
-  });
-
-  it("rejects bad signatures when a secret is configured", async () => {
-    process.env.INSTANTLY_WEBHOOK_SECRET = "whsec_test";
-    const body = JSON.stringify({ event_type: "reply_received" });
-    const bad = await fetch(`${base}/webhooks/instantly`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-instantly-signature": "deadbeef" },
-      body,
-    });
-    expect(bad.status).toBe(401);
-
-    const goodSig = createHmac("sha256", "whsec_test").update(body).digest("hex");
-    const good = await fetch(`${base}/webhooks/instantly`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-instantly-signature": goodSig },
-      body,
-    });
-    expect(good.status).toBe(200);
-    delete process.env.INSTANTLY_WEBHOOK_SECRET;
-  });
-});

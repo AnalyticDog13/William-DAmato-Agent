@@ -15,7 +15,6 @@ import {
 } from "@william/worker-orchestrator";
 import { requireOwner, resolveOwnerToken } from "./auth";
 import { cors, rateLimit, securityHeaders } from "./security";
-import { webhookRoutes } from "./webhooks";
 
 /** Collections the dashboard may list. Server-side whitelist — no dynamic table access. */
 function collections(ctx: AppContext): Record<string, Repository<any>> {
@@ -57,11 +56,10 @@ export function createServer(ctx: AppContext): Express {
   app.use(securityHeaders);
   app.use(cors(ctx.config.dashboardOrigin));
 
-  // Public endpoints (rate-limited): health + webhooks (signature-verified).
+  // Public endpoints (rate-limited): health.
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true, env: ctx.config.env, dryRun: ctx.config.dryRun });
   });
-  app.use("/webhooks", rateLimit({ windowMs: 60_000, max: 120 }), webhookRoutes(ctx));
 
   // Everything below is owner-only, enforced server-side.
   const api = express.Router();
@@ -270,26 +268,6 @@ export function createServer(ctx: AppContext): Express {
     });
   });
 
-  // Owner-provided transcripts/notes/design references → durable lessons.
-  // Transcript text is DATA (invariant 1): scanned and stored, never executed.
-  api.post("/transcripts", async (req, res) => {
-    const { source, text } = req.body as { source?: unknown; text?: unknown };
-    if (
-      typeof source !== "string" || !source.trim() ||
-      typeof text !== "string" || !text.trim() || text.length > 100_000
-    ) {
-      res.status(400).json({ error: "source and text (1–100k chars) required" });
-      return;
-    }
-    const job = ctx.store.queue.enqueue({
-      type: "ingest.transcript",
-      payload: { source: source.trim(), text },
-      traceId: newTraceId(),
-    });
-    await kickQueue(ctx);
-    res.status(202).json({ jobId: job.id });
-  });
-
   api.get("/jobs", (req, res) => {
     const q = req.query as Record<string, string | undefined>;
     res.json({ items: ctx.store.queue.list({ status: q.status, limit: q.limit ? Number(q.limit) : 200 }) });
@@ -322,21 +300,6 @@ export function createServer(ctx: AppContext): Express {
     const summary = seedDemoData(ctx);
     await kickQueue(ctx);
     res.json({ summary });
-  });
-
-  api.post("/demo/reply", async (req, res) => {
-    if (ctx.config.env !== "local") {
-      res.status(403).json({ error: "local_only" });
-      return;
-    }
-    const { leadId, text } = req.body as { leadId?: string; text?: string };
-    if (!leadId || !text || !ctx.store.leads.get(leadId)) {
-      res.status(400).json({ error: "leadId and text required" });
-      return;
-    }
-    ctx.store.queue.enqueue({ type: "reply.process", payload: { leadId, text, provider: "manual" }, traceId: newTraceId(), leadId });
-    await kickQueue(ctx);
-    res.json({ ok: true });
   });
 
   return app;
