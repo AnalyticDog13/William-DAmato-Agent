@@ -20,12 +20,8 @@
       "@william/db": ["packages/db/src/index.ts"],
       "@william/memory": ["packages/memory/src/index.ts"],
       "@william/integrations": ["packages/integrations/src/index.ts"],
-      "@william/templates": ["packages/templates/src/index.ts"],
       "@william/worker-site-auditor": ["workers/site-auditor/src/index.ts"],
-      "@william/worker-outreach": ["workers/outreach/src/index.ts"],
-      "@william/worker-site-builder": ["workers/site-builder/src/index.ts"],
-      "@william/worker-billing": ["workers/billing/src/index.ts"],
-      "@william/worker-scheduling": ["workers/scheduling/src/index.ts"]
+      "@william/worker-outreach": ["workers/outreach/src/index.ts"]
     }
   },
   "include": [

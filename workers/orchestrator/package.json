@@ -9,11 +9,7 @@
     "@william/db": "*",
     "@william/integrations": "*",
     "@william/memory": "*",
-    "@william/templates": "*",
-    "@william/worker-billing": "*",
     "@william/worker-outreach": "*",
-    "@william/worker-scheduling": "*",
-    "@william/worker-site-auditor": "*",
-    "@william/worker-site-builder": "*"
+    "@william/worker-site-auditor": "*"
   }
 }
