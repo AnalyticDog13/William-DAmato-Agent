@@ -141,6 +141,9 @@ function approvedRun(
     approvalRequestId: null,
     resultNote: null,
     traceId,
+    mode: "normal",
+    nicheQueue: [],
+    currentNiche: null,
   });
 
   // Grant the ACTIVATE_NEW_LEAD_SOURCE gate (same pattern as pipeline.test.ts).
@@ -471,6 +474,9 @@ describe("lead.source controller", () => {
       approvalRequestId: null,
       resultNote: null,
       traceId,
+      mode: "normal",
+      nicheQueue: [],
+      currentNiche: null,
     });
 
     // Grant ACTIVATE_NEW_LEAD_SOURCE (required by evaluateGate inside the controller).

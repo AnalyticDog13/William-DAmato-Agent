@@ -75,6 +75,7 @@ describe("Store repositories", () => {
       location: "Ithaca, NY", niche: "coffee_shop", target: 5, candidateCap: 40,
       status: "running", candidatesIngested: 0, qualifiedCount: 0, leadIds: [],
       nextPageToken: null, checks: 0, approvalRequestId: null, resultNote: null, traceId: "tr_1",
+      mode: "normal", nicheQueue: [], currentNiche: null,
     });
     expect(store.sourcingRuns.get(run.id)?.status).toBe("running");
     expect(store.sourcingRuns.list({ status: "running" }).length).toBe(1);

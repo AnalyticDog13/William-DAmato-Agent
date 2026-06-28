@@ -206,6 +206,9 @@ export function createServer(ctx: AppContext): Express {
       approvalRequestId: null,
       resultNote: null,
       traceId,
+      mode: "normal",
+      nicheQueue: [],
+      currentNiche: null,
     });
     const approval = requestApproval(ctx, {
       gate: "ACTIVATE_NEW_LEAD_SOURCE",

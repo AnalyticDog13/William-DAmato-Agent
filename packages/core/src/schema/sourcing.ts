@@ -20,5 +20,8 @@ export const SourcingRun = BaseEntity.extend({
   approvalRequestId: Id.nullable().default(null),
   resultNote: z.string().nullable().default(null),
   traceId: z.string(),
+  mode: z.enum(["normal", "batch"]).default("normal"),
+  nicheQueue: z.array(Niche).default([]),
+  currentNiche: Niche.nullable().default(null),
 });
 export type SourcingRun = z.infer<typeof SourcingRun>;
