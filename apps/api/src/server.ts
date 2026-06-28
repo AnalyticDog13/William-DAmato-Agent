@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import express, { type Express, type Request } from "express";
-import { GATE_DEFINITIONS, Niche, PolicyGateName, newId, newTraceId, nowIso } from "@william/core";
+import { GATE_DEFINITIONS, NICHE_META, Niche, PolicyGateName, newId, newTraceId, nowIso } from "@william/core";
 import type { Repository } from "@william/db";
 import {
   computeMetrics,
@@ -174,19 +174,46 @@ export function createServer(ctx: AppContext): Express {
   // Sourcing runs: owner triggers a one-click batch lead-sourcing session.
   // POST creates a SourcingRun (pending_approval) + ACTIVATE_NEW_LEAD_SOURCE approval.
   // Granting that approval sets the run to "running" and enqueues lead.source.
+  // mode="batch": ignores niche/target, sweeps all niches up to candidateCap.
+  // mode="normal" (default): requires valid niche + positive integer target.
   api.post("/sourcing-runs", (req, res) => {
     const body = req.body ?? {};
-    const niche = Niche.safeParse(body.niche);
-    const target = Number(body.target);
     const location = typeof body.location === "string" ? body.location.trim() : "";
-    if (!niche.success || !location || !Number.isInteger(target) || target <= 0) {
-      res.status(400).json({ error: "location, valid niche, and positive integer target required" });
+    const mode = body.mode === "batch" ? "batch" : "normal";
+
+    if (!location) {
+      res.status(400).json({ error: "location is required" });
       return;
     }
+
     const candidateCap =
-      Number.isInteger(body.candidateCap) && body.candidateCap > 0
+      Number.isInteger(body.candidateCap) && (body.candidateCap as number) > 0
         ? (body.candidateCap as number)
         : ctx.config.leadSourcing.defaultCandidateCap;
+
+    let niche: Niche;
+    let target: number;
+    let nicheQueue: Niche[];
+    let currentNiche: Niche | null;
+
+    if (mode === "batch") {
+      nicheQueue = (Object.keys(NICHE_META) as Niche[]).filter((n) => n !== "other");
+      currentNiche = nicheQueue[0] ?? null;
+      niche = nicheQueue[0] ?? "other";
+      target = candidateCap; // cap-governed; target = cap
+    } else {
+      const parsedNiche = Niche.safeParse(body.niche);
+      const parsedTarget = Number(body.target);
+      if (!parsedNiche.success || !Number.isInteger(parsedTarget) || parsedTarget <= 0) {
+        res.status(400).json({ error: "location, valid niche, and positive integer target required" });
+        return;
+      }
+      niche = parsedNiche.data;
+      target = parsedTarget;
+      nicheQueue = [];
+      currentNiche = null;
+    }
+
     const now = nowIso();
     const traceId = newTraceId();
     const run = ctx.store.sourcingRuns.insert({
@@ -194,7 +221,7 @@ export function createServer(ctx: AppContext): Express {
       createdAt: now,
       updatedAt: now,
       location,
-      niche: niche.data,
+      niche,
       target,
       candidateCap,
       status: "pending_approval",
@@ -206,16 +233,19 @@ export function createServer(ctx: AppContext): Express {
       approvalRequestId: null,
       resultNote: null,
       traceId,
-      mode: "normal",
-      nicheQueue: [],
-      currentNiche: null,
+      mode,
+      nicheQueue,
+      currentNiche,
     });
+    const approvalTitle = mode === "batch"
+      ? `Batch-source up to ${candidateCap} leads across all niches in ${location}`
+      : `Source ${target} ${niche} lead(s) in ${location}`;
     const approval = requestApproval(ctx, {
       gate: "ACTIVATE_NEW_LEAD_SOURCE",
       subjectType: "SourcingRun",
       subjectId: run.id,
       leadId: null,
-      title: `Source ${target} ${niche.data} lead(s) in ${location}`,
+      title: approvalTitle,
       detail: `Google Places sourcing run. Candidate cap ${candidateCap}.`,
       traceId,
     });

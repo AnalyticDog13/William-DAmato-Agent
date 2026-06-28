@@ -28,6 +28,7 @@ const FIRST_NICHE = Object.keys(NICHE_META)[0] ?? "barbershop";
 
 export function SourcingPage() {
   const [runs, setRuns] = useState<SourcingRun[]>([]);
+  const [batchMode, setBatchMode] = useState(false);
   const [form, setForm] = useState({
     location: "",
     niche: FIRST_NICHE,
@@ -49,14 +50,12 @@ export function SourcingPage() {
     setMessage("");
     setError("");
     try {
+      const payload = batchMode
+        ? { location: form.location.trim(), mode: "batch", candidateCap: form.candidateCap }
+        : { location: form.location.trim(), niche: form.niche, target: form.target, candidateCap: form.candidateCap };
       await api("/api/sourcing-runs", {
         method: "POST",
-        body: JSON.stringify({
-          location: form.location.trim(),
-          niche: form.niche,
-          target: form.target,
-          candidateCap: form.candidateCap,
-        }),
+        body: JSON.stringify(payload),
       });
       setMessage(
         "Sourcing run created — grant the ACTIVATE_NEW_LEAD_SOURCE approval in the Review Queue to start it."
@@ -88,25 +87,37 @@ export function SourcingPage() {
             onChange={(e) => setForm({ ...form, location: e.target.value })}
             style={{ minWidth: 200 }}
           />
-          <select
-            value={form.niche}
-            onChange={(e) => setForm({ ...form, niche: e.target.value })}
-          >
-            {Object.entries(NICHE_META).map(([k, m]) => (
-              <option key={k} value={k}>{m.label}</option>
-            ))}
-          </select>
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span className="sub">Target qualified:</span>
             <input
-              type="number"
-              min={1}
-              max={100}
-              style={{ width: 70 }}
-              value={form.target}
-              onChange={(e) => setForm({ ...form, target: Number(e.target.value) })}
+              type="checkbox"
+              checked={batchMode}
+              onChange={(e) => setBatchMode(e.target.checked)}
             />
+            <span>Batch (sweep all niches)</span>
           </label>
+          {!batchMode && (
+            <>
+              <select
+                value={form.niche}
+                onChange={(e) => setForm({ ...form, niche: e.target.value })}
+              >
+                {Object.entries(NICHE_META).map(([k, m]) => (
+                  <option key={k} value={k}>{m.label}</option>
+                ))}
+              </select>
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span className="sub">Target qualified:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  style={{ width: 70 }}
+                  value={form.target}
+                  onChange={(e) => setForm({ ...form, target: Number(e.target.value) })}
+                />
+              </label>
+            </>
+          )}
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span className="sub">Candidate cap:</span>
             <input

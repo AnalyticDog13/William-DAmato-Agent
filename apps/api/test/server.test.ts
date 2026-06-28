@@ -148,6 +148,21 @@ describe("sourcing-runs API", () => {
     expect(res.status).toBe(400);
   });
 
+  it("POST /api/sourcing-runs accepts mode=batch and seeds the niche queue", async () => {
+    const { NICHE_META } = await import("@william/core");
+    const res = await authed("/api/sourcing-runs", {
+      method: "POST",
+      body: JSON.stringify({ location: "Austin, TX", mode: "batch", candidateCap: 50 }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { run: { mode: string; nicheQueue: string[]; niche: string; target: number; candidateCap: number } };
+    expect(body.run.mode).toBe("batch");
+    const expectedQueue = Object.keys(NICHE_META).filter((n) => n !== "other");
+    expect(body.run.nicheQueue).toEqual(expectedQueue);
+    expect(body.run.niche).toBe(expectedQueue[0]);
+    expect(body.run.target).toBe(50); // target = candidateCap
+  });
+
   it("granting ACTIVATE_NEW_LEAD_SOURCE sets run to running and enqueues lead.source", async () => {
     // Create a sourcing run (mirrors the pattern above)
     const createRes = await authed("/api/sourcing-runs", {
