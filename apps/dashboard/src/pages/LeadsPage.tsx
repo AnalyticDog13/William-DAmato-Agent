@@ -24,6 +24,10 @@ interface Approval {
   createdAt: string;
 }
 
+interface ContactRow { leadId: string; email: string | null; }
+interface ScoreRow { leadId: string; score: number; tier: string; }
+interface CompanyRow { id: string; name: string; }
+
 const STATUS_COLOR: Record<string, string> = {
   opportunity: "green",
   customer: "green",
@@ -34,9 +38,24 @@ const STATUS_COLOR: Record<string, string> = {
   do_not_contact: "red",
 };
 
+const TIER_COLOR: Record<string, string> = {
+  hot: "green",
+  warm: "amber",
+  cold: "muted",
+  skip: "red",
+};
+
 export function LeadsPage() {
   const [items, setItems] = useState<Lead[]>([]);
   const [emailApprovals, setEmailApprovals] = useState<Record<string, Approval>>({});
+  // leadId → contact email from the contacts table
+  const [contacts, setContacts] = useState<Record<string, string | null>>({});
+  // leadId → { score, tier } from lead-scores table
+  const [scores, setScores] = useState<Record<string, { score: number; tier: string }>>({});
+  // companyId → company name from companies table
+  const [companies, setCompanies] = useState<Record<string, string>>({});
+  // "review" (default) or "auto" — from /api/overview
+  const [pushMode, setPushMode] = useState<"review" | "auto">("review");
   const [busy, setBusy] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -48,6 +67,12 @@ export function LeadsPage() {
     if (search) params.set("search", search);
     if (status) params.set("status", status);
     api<{ items: Lead[] }>(`/api/collections/leads?${params}`).then((r) => setItems(r.items));
+
+    // pushMode from overview (also exposes outreachScoreThreshold for future use)
+    api<{ pushMode?: "review" | "auto" }>("/api/overview").then((r) =>
+      setPushMode(r.pushMode ?? "review"),
+    );
+
     // Pending email approvals, keyed by lead → render inline below.
     api<{ items: Approval[] }>("/api/review-queue").then((r) => {
       const byLead: Record<string, Approval> = {};
@@ -55,6 +80,31 @@ export function LeadsPage() {
         if (a.gate === "SEND_FIRST_TOUCH" && a.leadId && !byLead[a.leadId]) byLead[a.leadId] = a;
       }
       setEmailApprovals(byLead);
+    });
+
+    // Contact emails, one per lead (first contact record wins)
+    api<{ items: ContactRow[] }>("/api/collections/contacts?limit=200").then((r) => {
+      const byLead: Record<string, string | null> = {};
+      for (const c of r.items) {
+        if (c.leadId && !(c.leadId in byLead)) byLead[c.leadId] = c.email;
+      }
+      setContacts(byLead);
+    });
+
+    // Lead scores, keyed by leadId (latest record used — list is ordered by recency)
+    api<{ items: ScoreRow[] }>("/api/collections/lead-scores?limit=200").then((r) => {
+      const byLead: Record<string, { score: number; tier: string }> = {};
+      for (const s of r.items) {
+        if (s.leadId && !(s.leadId in byLead)) byLead[s.leadId] = { score: s.score, tier: s.tier };
+      }
+      setScores(byLead);
+    });
+
+    // Company names, keyed by company id
+    api<{ items: CompanyRow[] }>("/api/collections/companies?limit=200").then((r) => {
+      const byId: Record<string, string> = {};
+      for (const c of r.items) byId[c.id] = c.name;
+      setCompanies(byId);
     });
   }, [search, status]);
   useEffect(refresh, [refresh]);
@@ -116,38 +166,53 @@ export function LeadsPage() {
           ))}
         </select>
         <button onClick={refresh}>Refresh</button>
+        {pushMode === "auto" && <span className="badge green">Auto-push ON</span>}
       </div>
 
       <div className="panel">
         <table>
           <thead>
-            <tr><th>Lead</th><th>Niche</th><th>Status</th><th>Email</th><th>Source</th><th>Created</th></tr>
+            <tr><th>Company</th><th>Status</th><th>Score</th><th>Email / outreach</th><th>Source</th><th>Created</th></tr>
           </thead>
           <tbody>
             {items.map((l) => {
               const approval = emailApprovals[l.id];
+              const contactEmail = contacts[l.id];
+              const score = scores[l.id];
+              const companyName = companies[l.companyId] ?? l.domain ?? l.id;
               return (
                 <tr key={l.id}>
-                  <td><Link to={`/leads/${l.id}`}>{l.domain ?? l.id}</Link></td>
-                  <td>{l.niche}</td>
+                  <td><Link to={`/leads/${l.id}`}>{companyName}</Link></td>
                   <td><span className={`badge ${STATUS_COLOR[l.status] ?? ""}`}>{l.status}</span></td>
                   <td>
-                    {approval ? (
+                    {score ? (
+                      <span className={`badge ${TIER_COLOR[score.tier] ?? ""}`}>{score.score} ({score.tier})</span>
+                    ) : (
+                      <span className="sub">—</span>
+                    )}
+                  </td>
+                  <td>
+                    {contactEmail && (
+                      <div className="mono" style={{ fontSize: "0.85em", marginBottom: 4 }}>{contactEmail}</div>
+                    )}
+                    {approval && pushMode !== "auto" ? (
                       <details>
                         <summary><span className="badge amber">email ready</span> review &amp; approve</summary>
                         <pre className="report" style={{ whiteSpace: "pre-wrap" }}>{approval.detail}</pre>
                         <div className="toolbar" style={{ marginTop: 8 }}>
                           <button className="approve" disabled={busy === approval.id} onClick={() => decide(approval.id, "granted")}>
-                            Approve &amp; send
+                            Approve &amp; push
                           </button>
                           <button className="reject" disabled={busy === approval.id} onClick={() => decide(approval.id, "rejected")}>
                             Reject
                           </button>
                         </div>
                       </details>
-                    ) : (
+                    ) : approval && pushMode === "auto" ? (
+                      <span className="badge blue">queued (auto-push)</span>
+                    ) : !contactEmail ? (
                       <span className="sub">—</span>
-                    )}
+                    ) : null}
                   </td>
                   <td>{l.source.kind} <span className="mono">{l.source.detail}</span></td>
                   <td>{new Date(l.createdAt).toLocaleDateString()}</td>

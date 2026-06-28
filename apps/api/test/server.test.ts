@@ -48,8 +48,10 @@ describe("API auth (server-side, every route)", () => {
   it("accepts the owner token", async () => {
     const res = await authed("/api/overview");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { dryRun: boolean };
+    const body = (await res.json()) as { dryRun: boolean; pushMode: string; outreachScoreThreshold: number };
     expect(body.dryRun).toBe(true); // local env always dry-run
+    expect(body.pushMode).toBe("review"); // default when PUSH_MODE env var is unset
+    expect(typeof body.outreachScoreThreshold).toBe("number"); // default 45
   });
 
   it("health endpoint is public but leaks nothing sensitive", async () => {

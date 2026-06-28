@@ -73,6 +73,8 @@ export function createServer(ctx: AppContext): Express {
       env: ctx.config.env,
       dryRun: ctx.config.dryRun,
       williamBuildsWebsites: ctx.config.williamBuildsWebsites,
+      pushMode: ctx.config.pushMode,
+      outreachScoreThreshold: ctx.config.outreachScoreThreshold,
       pendingApprovals: ctx.store.approvals.list({ status: "pending", limit: 10 }),
       openOwnerRequests: ctx.store.ownerRequests.list({ status: "open", limit: 10 }),
       recentActivity: ctx.store.activity.list({ limit: 20 }),
