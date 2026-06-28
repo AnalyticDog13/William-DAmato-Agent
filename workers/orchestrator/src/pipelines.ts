@@ -254,8 +254,9 @@ const handleScore: JobHandler = async (ctx, job) => {
     traceId: job.traceId,
     data: { reasons: result.reasons },
   });
-  if (result.tier === "skip") {
-    setLeadStatus(ctx, { ...lead, status: "disqualified" }, "disqualified", `Score ${result.score} below contact threshold`);
+  if (result.score <= ctx.config.outreachScoreThreshold) {
+    setLeadStatus(ctx, lead, "scored");
+    ctx.store.writeActivity(lead.id, "below_threshold", `Score ${result.score} not above threshold ${ctx.config.outreachScoreThreshold} — kept, not emailed`, { traceId: job.traceId });
     return;
   }
   setLeadStatus(ctx, lead, "scored");
@@ -510,7 +511,6 @@ const handleSend: JobHandler = async (ctx, job) => {
 
 // ─── Lead sourcing controller ─────────────────────────────────────────────────
 
-const QUALIFIED_MIN_SCORE = 35;
 const MAX_SOURCING_CHECKS = 300;
 
 /**
@@ -548,7 +548,7 @@ const handleLeadSource: JobHandler = async (ctx, job) => {
   };
 
   // 1) Re-count qualified and increment the check counter.
-  const qualifiedCount = countQualified(ctx, run.leadIds, QUALIFIED_MIN_SCORE);
+  const qualifiedCount = countQualified(ctx, run.leadIds, ctx.config.outreachScoreThreshold);
   const checks = run.checks + 1;
   ctx.store.sourcingRuns.save({ ...run, qualifiedCount, checks, updatedAt: nowIso() });
 

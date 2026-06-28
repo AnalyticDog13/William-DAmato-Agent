@@ -551,3 +551,38 @@ describe("email gate: no real email → disqualified (no info@ guessing)", () =>
     expect(ctx.store.leads.get(l.id)!.status).toBe("disqualified");
   });
 });
+
+// Domain seed values (sum of char codes % 3) used here:
+//   b-coffee.example.com → seed 1918 → 1918%3=1 → bad=1 → score ~31 (cold, ≤ 45)
+//   a-coffee.example.com → seed 1917 → 1917%3=0 → bad=0 → score ~96 (hot, > 45)
+describe("score threshold gate (task 14)", () => {
+  it("does not enqueue outreach.draft when score <= threshold — lead kept as scored, not emailed", async () => {
+    ctx.config.outreachScoreThreshold = 45;
+    // bad=1 domain → score ~31, cold tier — well below the 45 threshold.
+    ingestLead(ctx, lead("B Coffee", "https://b-coffee.example.com", "owner@b-coffee.example.com"));
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    const l = ctx.store.leads.list()[0]!;
+    // Lead is KEPT (record exists) and NOT emailed (no draft), NOT disqualified.
+    expect(l.status).toBe("scored");
+    expect(ctx.store.outreachDrafts.list({ leadId: l.id })).toHaveLength(0);
+    // No outreach.draft job should be in the queue for this lead.
+    expect(ctx.store.queue.list().some((j) => j.type === "outreach.draft" && j.leadId === l.id)).toBe(false);
+    // A below_threshold activity must have been written.
+    expect(ctx.store.activity.list({ leadId: l.id }).some((a) => a.kind === "below_threshold")).toBe(true);
+  });
+
+  it("enqueues outreach.draft when score > threshold", async () => {
+    ctx.config.outreachScoreThreshold = 45;
+    // bad=0 domain → score ~96, hot tier — well above the 45 threshold.
+    ingestLead(ctx, lead("A Coffee", "https://a-coffee.example.com", "owner@a-coffee.example.com"));
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    const l = ctx.store.leads.list()[0]!;
+    // Lead reached draft_ready — a draft was created and is awaiting owner approval.
+    expect(l.status).toBe("draft_ready");
+    expect(ctx.store.outreachDrafts.list({ leadId: l.id }).length).toBeGreaterThan(0);
+    // No below_threshold activity — the lead did qualify.
+    expect(ctx.store.activity.list({ leadId: l.id }).some((a) => a.kind === "below_threshold")).toBe(false);
+  });
+});

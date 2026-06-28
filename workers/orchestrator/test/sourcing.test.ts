@@ -96,7 +96,7 @@ function seedQualifiedLead(ctx: AppContext): string {
     updatedAt: now,
     leadId,
     auditId: null,
-    score: 60, // well above the 35 threshold
+    score: 60, // well above the 45 default threshold (outreachScoreThreshold)
     tier: "warm",
     reasons: ["pre-seeded for test"],
     scoredAt: now,
@@ -190,8 +190,9 @@ describe("lead.source controller", () => {
   it("sources, ingests, and stops when target is met or Places exhausted", async () => {
     // Two businesses — both ingested. The new pipeline order is contact→audit→score→draft.
     // fetchHomepageEmails returns [] in dry-run (local), so we configure enrichment to
-    // supply a contactable email. a-coffee has mock bad=0 (score > 35) → qualifies;
-    // b-coffee has bad=1 (score ≤ 35) → doesn't qualify. target=1, so the run completes.
+    // supply a contactable email. a-coffee has mock bad=0 (score ~96 > 45) → qualifies;
+    // b-coffee has bad=1 (score ~31 ≤ 45) → below threshold, stays scored, no draft.
+    // target=1, so the run completes once a-coffee qualifies.
     configureEnrichment(ctx, "sandbox");
     ctx.integrations.enrichment.findContacts = async (_t, domain) => [
       { email: `info@${domain}`, name: null, role: null, confidence: 0.8, provider: "stub" },
@@ -346,9 +347,9 @@ describe("lead.source controller", () => {
     // next page, and the run reaches `completed` with qualifiedCount >= target.
     // Domain selection: the mock auditor synthesizes behaviour deterministically
     // from seed = sum(charCodes(domain)) % 3:
-    //   bad=0  → rough site  → high lead score (well above 35)
-    //   bad=1  → mediocre    → low lead score (~31, BELOW 35)
-    //   bad=2  → decent site → low opportunity score
+    //   bad=0  → rough site  → high lead score (~96, well above 45 threshold)
+    //   bad=1  → mediocre    → low lead score (~31, BELOW 45 threshold)
+    //   bad=2  → decent site → very low opportunity score
     //
     // Both domains must have bad=0 so they qualify for countQualified (score>35).
     //   bb-coffee.example.com → seed=2016 → 2016%3=0 → bad=0 → high score
