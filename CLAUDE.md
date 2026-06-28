@@ -67,9 +67,18 @@ above a threshold, write a short personalized email → push the lead + email to
 - **Final step:** rewrite this file + `README.md` + `handoff.md` to describe the
   outreach-only tool (keep the invariants that still apply + the canary).
 
-**Status: design approved 2026-06-28; writing the spec + implementation plan
-next. This banner will be replaced by the rewritten standards once the trim is
-built.**
+**Status: design + implementation plan approved 2026-06-28.** Spec:
+`docs/superpowers/specs/2026-06-28-outreach-tool-pivot-design.md`. Plan:
+`docs/superpowers/plans/2026-06-28-outreach-tool-pivot.md` (22 tasks,
+subagent-driven, TDD, mock-first). **Execution order (resume here):**
+Phase 0 baseline → Phase 1 delete scrapped handlers/workers/adapters/schemas/
+routes/dashboard pages (keep suite green each commit) → Phase 2 add the two
+settings → Phase 3 rewrite the email + Opus prompt (compliance-reviewer) →
+Phase 4 reorder pipeline (cheap email discovery before audit) + score>45 gate +
+PUSH_MODE auto-push (compliance-reviewer) → Phase 5 batch multi-niche sweep →
+Phase 6 clean Leads page (inline email + Approve & push) → Phase 7 rewrite
+CLAUDE.md/README/handoff + final verification. This banner is replaced by the
+rewritten standards in Phase 7.
 
 ## Canary (context-integrity check)
 
