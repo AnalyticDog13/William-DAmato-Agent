@@ -10,7 +10,6 @@ import {
   runUntilEmpty,
   seedDemoData,
   generateDailyReport,
-  generateWeeklyReport,
   type AppContext,
 } from "../src/index";
 
@@ -169,71 +168,6 @@ describe("pipeline reorder + email-ladder gate (task 8)", () => {
     }
     // The overall pipeline still stops at approval (same as before).
     expect(["draft_ready", "disqualified"]).toContain(l.status);
-  });
-});
-
-describe("weekly report", () => {
-  function insertExperimentWithTraffic(sendsPerVariant: number) {
-    const now = nowIso();
-    const experiment = ctx.store.experiments.insert({
-      id: newId("exp"),
-      createdAt: now,
-      updatedAt: now,
-      name: "copy A/B",
-      hypothesis: "v2 wins",
-      dimension: "outreach_variant" as const,
-      variants: ["v1-cornell-mockup", "v2-finding-first"],
-      status: "running" as const,
-      conclusion: "",
-    });
-    let n = 0;
-    for (const variant of experiment.variants) {
-      for (let i = 0; i < sendsPerVariant; i++) {
-        const leadId = `lead_w${n++}`;
-        ctx.store.outreachDrafts.insert({
-          id: newId("odft"), createdAt: now, updatedAt: now, leadId, contactId: newId("con"),
-          variant, subject: "s", body: "b", personalizationNotes: [], auditFindingsUsed: [],
-          status: "sent_dry_run" as const, approvalRequestId: null, sentAt: now, traceId: "trc",
-        });
-        // v2 replies twice as often: every 2nd lead vs every 4th.
-        const replyEvery = variant === "v2-finding-first" ? 2 : 4;
-        if (i % replyEvery === 0) {
-          ctx.store.replyEvents.insert({
-            id: newId("rply"), createdAt: now, updatedAt: now, leadId, contactId: null,
-            provider: "manual" as const, externalMessageId: null, receivedAt: now,
-            intent: "positive" as const, intentConfidence: 0.9, bodyExcerpt: "", threadSummary: "",
-            recommendedNextStep: "", ownerNotifiedAt: null, followUpsPaused: false,
-          });
-        }
-      }
-    }
-    return experiment;
-  }
-
-  it("rolls up the week, includes experiment findings, and upserts by weekStart", () => {
-    insertExperimentWithTraffic(10);
-    const { report, reportText } = generateWeeklyReport(ctx, "2026-06-14");
-    expect(report.weekStart).toBe("2026-06-08");
-    expect(report.weekEnd).toBe("2026-06-14");
-    expect(reportText).toMatch(/Weekly Report/);
-    expect(report.experimentFindings.join()).toContain("copy A/B");
-    // Re-run replaces, never duplicates.
-    generateWeeklyReport(ctx, "2026-06-14");
-    expect(ctx.store.weeklyReports.list({ skey: "2026-06-08" })).toHaveLength(1);
-  });
-
-  it("derives an outreach lesson only once every variant has enough sends", () => {
-    insertExperimentWithTraffic(9);
-    generateWeeklyReport(ctx, "2026-06-14");
-    expect(ctx.store.lessons.list({ skey: "outreach" })).toHaveLength(0);
-
-    ctx = createContext({ inMemory: true, silent: true });
-    insertExperimentWithTraffic(10);
-    const { report } = generateWeeklyReport(ctx, "2026-06-14");
-    const lessons = ctx.store.lessons.list({ skey: "outreach" });
-    expect(lessons).toHaveLength(1);
-    expect(lessons[0]!.lesson).toContain("v2-finding-first");
-    expect(report.lessons.join()).toContain("v2-finding-first");
   });
 });
 

@@ -66,49 +66,6 @@ describe("API auth (server-side, every route)", () => {
   });
 });
 
-describe("experiments API", () => {
-  it("rejects outreach_variant experiments with unregistered variants", async () => {
-    const res = await authed("/api/experiments", {
-      method: "POST",
-      body: JSON.stringify({ name: "bad", hypothesis: "h", dimension: "outreach_variant", variants: ["v1-cornell-mockup", "v9-nope"] }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it("creates, computes, and concludes an experiment", async () => {
-    const create = await authed("/api/experiments", {
-      method: "POST",
-      body: JSON.stringify({
-        name: "copy A/B",
-        hypothesis: "finding-first wins",
-        dimension: "outreach_variant",
-        variants: ["v1-cornell-mockup", "v2-finding-first"],
-      }),
-    });
-    expect(create.status).toBe(201);
-    const { experiment } = (await create.json()) as { experiment: { id: string; status: string } };
-    expect(experiment.status).toBe("running");
-
-    const compute = await authed(`/api/experiments/${experiment.id}/compute`, { method: "POST" });
-    expect(compute.status).toBe(200);
-    const { results } = (await compute.json()) as { results: unknown[] };
-    expect(Array.isArray(results)).toBe(true);
-
-    const conclude = await authed(`/api/experiments/${experiment.id}/conclude`, {
-      method: "POST",
-      body: JSON.stringify({ status: "concluded", conclusion: "v2 wins" }),
-    });
-    expect(conclude.status).toBe(200);
-    expect(ctx.store.experiments.get(experiment.id)!.status).toBe("concluded");
-    expect(ctx.store.experiments.get(experiment.id)!.conclusion).toBe("v2 wins");
-  });
-
-  it("validates required fields and conclude status", async () => {
-    expect((await authed("/api/experiments", { method: "POST", body: JSON.stringify({ name: "", hypothesis: "", dimension: "bogus", variants: [] }) })).status).toBe(400);
-    expect((await authed("/api/experiments/exp_missing/conclude", { method: "POST", body: JSON.stringify({ status: "concluded", conclusion: "x" }) })).status).toBe(404);
-  });
-});
-
 describe("owner-triggered preview deploy API", () => {
   function insertProject(previewPath: string | null) {
     const now = new Date().toISOString();

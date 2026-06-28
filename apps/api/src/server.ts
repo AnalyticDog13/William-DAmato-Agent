@@ -1,21 +1,18 @@
 import { existsSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import express, { type Express, type Request } from "express";
-import { Experiment, GATE_DEFINITIONS, Niche, PolicyGateName, newId, newTraceId, nowIso } from "@william/core";
+import { GATE_DEFINITIONS, Niche, PolicyGateName, newId, newTraceId, nowIso } from "@william/core";
 import type { Repository } from "@william/db";
 import {
-  computeExperimentResults,
   computeMetrics,
   decideApproval,
   generateDailyReport,
-  generateWeeklyReport,
   ingestLead,
   requestApproval,
   runUntilEmpty,
   seedDemoData,
   type AppContext,
 } from "@william/worker-orchestrator";
-import { FIRST_TOUCH_VARIANTS } from "@william/worker-outreach";
 import { requireOwner, resolveOwnerToken } from "./auth";
 import { cors, rateLimit, securityHeaders } from "./security";
 import { webhookRoutes } from "./webhooks";
@@ -443,89 +440,6 @@ export function createServer(ctx: AppContext): Express {
     });
   });
 
-  // Experiment lifecycle. Variant assignment itself happens in the draft
-  // pipeline (deterministic per lead) — these routes only manage the records.
-  api.post("/experiments", (req, res) => {
-    const body = req.body as { name?: unknown; hypothesis?: unknown; dimension?: unknown; variants?: unknown };
-    const dimension = Experiment.shape.dimension.safeParse(body.dimension);
-    const variants = Array.isArray(body.variants) ? body.variants.filter((v): v is string => typeof v === "string" && v.trim().length > 0) : [];
-    if (
-      typeof body.name !== "string" || !body.name.trim() ||
-      typeof body.hypothesis !== "string" || !body.hypothesis.trim() ||
-      !dimension.success || variants.length < 2
-    ) {
-      res.status(400).json({ error: "name, hypothesis, valid dimension, and >=2 variants required" });
-      return;
-    }
-    if (dimension.data === "outreach_variant") {
-      const unknown = variants.filter((v) => !(FIRST_TOUCH_VARIANTS as readonly string[]).includes(v));
-      if (unknown.length > 0) {
-        res.status(400).json({ error: `unknown outreach variants: ${unknown.join(", ")} (registered: ${FIRST_TOUCH_VARIANTS.join(", ")})` });
-        return;
-      }
-    }
-    const now = nowIso();
-    const experiment = ctx.store.experiments.insert({
-      id: newId("exp"),
-      createdAt: now,
-      updatedAt: now,
-      name: body.name.trim(),
-      hypothesis: body.hypothesis.trim(),
-      dimension: dimension.data,
-      variants,
-      status: "running",
-      conclusion: "",
-    });
-    ctx.store.writeAudit({
-      traceId: newTraceId(),
-      actor: "owner",
-      action: "experiment.created",
-      subjectType: "Experiment",
-      subjectId: experiment.id,
-      leadId: null,
-      gate: null,
-      outcome: "recorded",
-      detail: `${experiment.name} [${experiment.variants.join(" vs ")}]`,
-    });
-    res.status(201).json({ experiment });
-  });
-
-  api.post("/experiments/:id/compute", (req, res) => {
-    const experiment = ctx.store.experiments.get(req.params.id!);
-    if (!experiment) {
-      res.status(404).json({ error: "not_found" });
-      return;
-    }
-    res.json({ results: computeExperimentResults(ctx, experiment) });
-  });
-
-  api.post("/experiments/:id/conclude", (req, res) => {
-    const experiment = ctx.store.experiments.get(req.params.id!);
-    const { status, conclusion } = req.body as { status?: string; conclusion?: string };
-    if (!experiment) {
-      res.status(404).json({ error: "not_found" });
-      return;
-    }
-    if ((status !== "concluded" && status !== "abandoned") || typeof conclusion !== "string" || !conclusion.trim()) {
-      res.status(400).json({ error: "status (concluded|abandoned) and conclusion text required" });
-      return;
-    }
-    const results = computeExperimentResults(ctx, experiment); // final snapshot
-    const saved = ctx.store.experiments.save({ ...experiment, status, conclusion: conclusion.trim() });
-    ctx.store.writeAudit({
-      traceId: newTraceId(),
-      actor: "owner",
-      action: `experiment.${status}`,
-      subjectType: "Experiment",
-      subjectId: saved.id,
-      leadId: null,
-      gate: null,
-      outcome: "recorded",
-      detail: conclusion.trim(),
-    });
-    res.json({ experiment: saved, results });
-  });
-
   // Owner-provided transcripts/notes/design references → durable lessons.
   // Transcript text is DATA (invariant 1): scanned and stored, never executed.
   api.post("/transcripts", async (req, res) => {
@@ -554,11 +468,6 @@ export function createServer(ctx: AppContext): Express {
   api.get("/reports/daily", (_req, res) => {
     const { memory, reportText } = generateDailyReport(ctx);
     res.json({ memory, reportText });
-  });
-
-  api.get("/reports/weekly", (_req, res) => {
-    const { report, reportText } = generateWeeklyReport(ctx);
-    res.json({ report, reportText });
   });
 
   // Preview artifact for side-by-side review (auth applies; path is fixed server-side).

@@ -1,17 +1,14 @@
 /**
- * End-to-end DRY-RUN demo: seeds realistic leads and walks the entire
+ * End-to-end DRY-RUN demo: seeds realistic leads and walks the outreach
  * pipeline — intake → audit → score → contact → draft → owner approval →
- * (simulated) send → replies → opportunity → website brief (owner builds) →
- * ship (owner's repo, simulated) → delivery email → billing draft → approval →
- * (simulated) payment link → daily report.
+ * (simulated) send → daily report.
  *
  * Run: npm run demo
  * Everything is simulated; no external call leaves the machine.
  */
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { newTraceId } from "@william/core";
-import { decideApproval, requestApproval } from "./approvals";
+import { decideApproval } from "./approvals";
 import { createContext } from "./context";
 import { generateDailyReport } from "./reports";
 import { runUntilEmpty } from "./runner";
@@ -59,75 +56,6 @@ async function main(): Promise<void> {
   }
   await runUntilEmpty(ctx, 100, futureClock);
   say(`3) Owner approved ${toApprove.length} drafts → sends executed as DRY-RUN (mock Instantly): ${ctx.store.campaignSyncs.count()} campaign sync record(s).\n`);
-
-  // 4) Replies arrive (webhook-equivalent): one positive, one opt-out
-  const [first, second] = toApprove;
-  if (first?.leadId) {
-    ctx.store.queue.enqueue({
-      type: "reply.process",
-      payload: { leadId: first.leadId, text: "This sounds interesting — send the mockup, what would it cost?", provider: "instantly" },
-      traceId: newTraceId(),
-      leadId: first.leadId,
-    });
-  }
-  if (second?.leadId) {
-    ctx.store.queue.enqueue({
-      type: "reply.process",
-      payload: { leadId: second.leadId, text: "I'm not interested, please remove me.", provider: "instantly" },
-      traceId: newTraceId(),
-      leadId: second.leadId,
-    });
-  }
-  await runUntilEmpty(ctx, 100, futureClock);
-  const opp = ctx.store.opportunities.list()[0];
-  say(`4) Replies processed: ${ctx.store.replyEvents.count()} total → ${ctx.store.replyEvents.count({ status: "positive" })} positive (opportunity created, owner notified, call slots suggested, website brief generated), ${ctx.store.replyEvents.count({ status: "unsubscribe" })} unsubscribe honored → do-not-contact.`);
-  const brief = ctx.store.websiteBriefs.list()[0];
-  if (brief) say(`   📋 Website brief generated for the owner (target ${brief.targetModel}, ${brief.weaknesses.length} weaknesses to fix) — paste into Fable/Opus to build.\n`);
-
-  // 4b) Owner builds the site externally, marks it ready with a repo URL → ship
-  //     (dry-run prod deploy) → delivery email drafted for approval.
-  if (brief) {
-    ctx.store.websiteBriefs.save({ ...brief, repoUrl: "https://github.com/owner/demo-site" });
-    const shipApproval = requestApproval(ctx, {
-      gate: "DEPLOY_PRODUCTION",
-      subjectType: "WebsiteBrief",
-      subjectId: brief.id,
-      leadId: brief.leadId,
-      title: "demo: ship owner-built site",
-      detail: "https://github.com/owner/demo-site",
-      traceId: newTraceId(),
-    });
-    decideApproval(ctx, shipApproval.id, "granted", "demo: owner approved the ship");
-    ctx.store.queue.enqueue({ type: "site.ship", payload: { websiteBriefId: brief.id, approvalRequestId: shipApproval.id }, traceId: shipApproval.traceId, leadId: brief.leadId });
-    await runUntilEmpty(ctx, 50, futureClock);
-    const shipped = ctx.store.websiteBriefs.get(brief.id);
-    const delivery = ctx.store.outreachDrafts.list().find((d) => d.variant === "delivery-1");
-    say(`4b) Owner shipped the finished repo → brief is ${shipped?.status} (production deploy SIMULATED), delivery email ${delivery ? "drafted (awaiting owner approval)" : "not drafted"}.\n`);
-  }
-
-  // 5) Billing draft + approval
-  if (opp) {
-    ctx.store.queue.enqueue({
-      type: "billing.draft",
-      payload: { leadId: opp.leadId, opportunityId: opp.id, kind: "payment_link", description: "Website design & build — 50% deposit", amountUsd: 400 },
-      traceId: newTraceId(),
-      leadId: opp.leadId,
-    });
-    await runUntilEmpty(ctx, 50, futureClock);
-    const payApproval = ctx.store.approvals.list({ status: "pending", skey: "SEND_PAYMENT_REQUEST" })[0];
-    if (payApproval) {
-      decideApproval(ctx, payApproval.id, "granted", "demo: owner approved payment request");
-      ctx.store.queue.enqueue({
-        type: "billing.execute",
-        payload: { invoiceDraftId: payApproval.subjectId },
-        traceId: payApproval.traceId,
-        leadId: payApproval.leadId,
-      });
-      await runUntilEmpty(ctx, 50, futureClock);
-    }
-    const invoice = ctx.store.invoiceDrafts.list()[0];
-    say(`5) Billing: payment link draft → owner approved → executed as ${invoice?.status} ${invoice?.url ? `(${invoice.url})` : ""}.\n`);
-  }
 
   // 6) Daily report + memory
   const { reportText } = generateDailyReport(ctx);

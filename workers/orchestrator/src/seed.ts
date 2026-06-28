@@ -52,22 +52,6 @@ export function seedDemoData(ctx: AppContext): SeedSummary {
     reason: "Unsubscribed during earlier manual outreach",
   });
 
-  // A running copy experiment so the demo pipeline exercises variant assignment.
-  const experimentName = "First-touch copy: intro-led vs finding-led";
-  if (!ctx.store.experiments.list({ limit: 100 }).some((e) => e.name === experimentName)) {
-    ctx.store.experiments.insert({
-      id: newId("exp"),
-      createdAt: now,
-      updatedAt: now,
-      name: experimentName,
-      hypothesis: "Opening with the audit finding (v2) earns more replies than opening with the intro (v1).",
-      dimension: "outreach_variant",
-      variants: ["v1-cornell-mockup", "v2-finding-first"],
-      status: "running",
-      conclusion: "",
-    });
-  }
-
   const summary: SeedSummary = { created: 0, duplicates: 0, blocked: 0 };
   const inputs: LeadInput[] = [
     ...DEMO_LEADS,
