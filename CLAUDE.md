@@ -643,7 +643,66 @@ William now sources qualified leads automatically instead of the owner hand-ente
   `places:searchText` response shape (`nextPageToken` field name + that pagination terminates) and
   re-run `compliance-reviewer` on the live text→data path (sourced business strings stay DATA).
 
-### Done (Mobile audit-screenshot fidelity — real device emulation, 281 tests green)
+### Done (Approved send stranded — orphan-reclaim + HTTP timeout + send ok-check + idempotency + lead-detail approve, 286 tests green)
+
+**Round 2 (same session): the send was ALSO hanging + silently false-succeeding.** After the
+orphan-reclaim recovered the stuck job (attempts 1→2, proving reclaim works), it then hung in
+`handleSend` → real `instantly.pushLead`: **`callJson` had NO HTTP timeout** (`real/shared.ts`),
+so a non-responding request blocked the SINGLE serial worker forever (the next approved send sat
+`pending` behind it; lead never `contacted`). Compounding bug: **`handleSend` never checked
+`result.ok`** — a *failed* push would still mark the lead `contacted` + record a campaign sync
+(silent false success). Fixes (TDD): (a) `callJson` now applies `AbortSignal.timeout` (default 20s,
+honors a caller signal) → a hung request returns the normal `{ok:false}` failure instead of
+freezing the queue; Anthropic calls get 60s via an `anthropicCall` helper (they can run long; still
+fail-closed to template). (b) `handleSend` throws on `!result.ok` (writes a `send_failed` activity)
+→ the job retries then dead-letters, lead stays pre-send, NO false `contacted`/sync. **286 tests**
+(2 more: callJson-abort, failed-push-not-contacted), typecheck clean, demo 0 dead-letter,
+`compliance-reviewer` **8/8 PASS** (A1 LOW advisory — the 60s Anthropic timeout — applied). **Net:
+a hung Instantly call can no longer freeze the worker, and a failed send is now VISIBLE (dead-letter
++ activity) instead of a fake "contacted". ⚠️ The first real `pushLead` (write scope) had never run
+live — restart the worker to load this; the hang now surfaces as a readable error in the job's
+`last_error` so the real Instantly issue can be diagnosed.**
+
+### Done (Approved send stranded — queue orphan-reclaim + send idempotency + lead-detail approve, 284 tests green)
+
+**Owner-reported, 2026-06-22; UNCOMMITTED on `main`.** Symptom: owner approved a first-touch email
+but it never pushed to Instantly and the lead never went to `contacted`. **The approve→send wiring
+is CORRECT** — the decide route enqueues `outreach.send` (`server.ts:184`) and `handleSend` pushes
+to Instantly then flips the lead to `contacted` (`pipelines.ts:600`). Two compounding causes,
+confirmed by querying `data/william.db` (a `running` `outreach.send` job + an overdue unclaimed
+`instantly.pollReplies`) and the process list (API+dashboard up, **no `npm run worker`**):
+
+1. **The worker wasn't running.** In `staging`/`production`, `kickQueue` is a **no-op** — it only
+   drains inline when `env === "local"` (`server.ts:67-70`). So `outreach.send` is processed ONLY
+   by the separate `npm run worker`. With no worker, the enqueued send sits forever.
+2. **Durability bug (real):** a worker had claimed the send (status→`running`), then stopped
+   mid-job. `JobQueue.claimNext` only selects `status='pending'` (`queue.ts:64`), so an orphaned
+   `running` job is **stranded forever** — silently losing an approved lead on every worker
+   restart/crash.
+
+Fixes (TDD, mock-first):
+- **`JobQueue.reclaimRunning()`** (`packages/db/src/queue.ts`): resets orphaned `running`→`pending`
+  (preserving `attempts`), and **dead-letters** any job already at `max_attempts` (poison-loop
+  guard). Called once at `runForever` startup (`runner.ts`) with a warning log — **a worker restart
+  now auto-recovers the stuck send.** Single-process model makes "all running = orphan at startup"
+  safe. (Local inline path unchanged — dry-run/demo.)
+- **Idempotency guard in `handleSend`** (`pipelines.ts`): a re-run for an already-`sent`/
+  `sent_dry_run` draft is a no-op (writes a `send_skipped_duplicate` activity) → reclaim can never
+  double-push. This was the `compliance-reviewer` LOW advisory (first-touch/delivery drafts weren't
+  covered by the followup-only touch cap), applied. Each touch is its own draft, so follow-ups are
+  unaffected.
+- **LeadDetail "Approve & send / Reject" button** next to the email (`apps/dashboard/src/pages/
+  LeadDetail.tsx`): fetches the lead's pending approval from the existing `GET /api/review-queue`
+  and posts to the existing gated `POST /api/approvals/:id/decide` (same SEND_FIRST_TOUCH gate +
+  send screening as the Review Queue / Leads page — no new endpoint, no new gate). The
+  pending-approval draft auto-expands so the email sits next to the buttons.
+- **284 tests green** (3 new: 2 queue reclaim, 1 send idempotency), typecheck clean, demo 0
+  dead-letter, dashboard builds. **`compliance-reviewer` PASS** (8/8 invariants; the duplicate-send
+  advisory it raised was applied — gate/DNC/touch-cap re-checks all still run on every reclaimed
+  send). **Operational: staging needs `npm run worker` + `npm run dev:api` + `npm run dev:dashboard`
+  all running; restarting the worker auto-recovers the currently-stranded send.**
+
+### Done (Mobile audit-screenshot fidelity — real device emulation, committed `51519a0`, 281 tests green)
 
 **Owner-reported, 2026-06-22; UNCOMMITTED on `main`.** Trigger: the dashboard's mobile audit
 preview didn't match what the owner saw opening the site on a real phone. **Diagnosis: a backend
@@ -705,7 +764,8 @@ TDD + mock-first (280 tests green, typecheck clean, demo 0 dead-letter on a clea
 **Where we are (2026-06-22):** the platform is feature-complete and built mock-first end to end.
 Automatic lead sourcing (Google Places) and the email-ranking / suffix-blacklist / reject→draft
 fixes are **DONE, committed + pushed** on `main` (latest `fab3695`); the mobile audit-screenshot
-fidelity fix is **DONE but UNCOMMITTED** on `main`. `npm test` **281 green**, typecheck clean,
+fidelity fix is committed (`51519a0`); the queue orphan-reclaim + send-idempotency + lead-detail
+approve-button + send HTTP-timeout/ok-check fixes are **DONE but UNCOMMITTED** on `main`. `npm test` **286 green**, typecheck clean,
 `npm run demo` 0 dead-letter (on a clean db), `compliance-reviewer` PASS on every sensitive delta.
 **First real outbound has happened** (two leads queued to the live Instantly
 campaign, weekdays-only). **Restart `npm run worker` + `npm run dev:api` to load the latest code.**
@@ -731,6 +791,25 @@ DNC/unsubscribe screened at intake/draft/send; gates + compliance suite green.
    (spec lists it as future). Optional.
 5. **Free-text revision interpretation** — dormant while `WILLIAM_BUILDS_WEBSITES=false`; build when
    re-enabling the self-builder. Compliance review required.
+6. **Per-niche response-rate tracking → niche-aware sourcing (owner idea, 2026-06-22 — NOT YET
+   SPECCED).** Owner's stated intent: track which **niches** get the highest outreach response
+   rate so that, once live with **automatic lead sourcing** (`lead.source` controller), William
+   preferentially targets the best-performing niches instead of treating all niches equally. The
+   building blocks already exist — `Reply`/`classifyReply` (reply outcomes), `OutreachDraft`/send
+   records (the denominator), `NICHE_META`/`Niche` (the dimension, on every lead + `SourcingRun`),
+   the **experiment engine** + `WeeklyReport` rollups (precedent for sent×replied aggregation +
+   `DurableLesson` thresholds), and the sourcing autopilot top-up (item #4) as the natural consumer
+   of a niche ranking. ⚠️ **Do NOT just build this — the owner explicitly asked to be questioned
+   first.** Before any code, run a **brainstorm pass** (`superpowers:brainstorming`) and confirm
+   with the owner: *why* / the real goal; **which metric counts as "response"** (any reply vs.
+   positive/interested reply vs. booked call vs. paid customer — `auto_reply` excluded, per the
+   experiment-engine precedent); the **minimum sample size** before a niche's rate is trusted (cf.
+   the weekly-report ≥10-sends/arm rule) and how **cold-start / zero-data niches** are handled (so a
+   new niche isn't starved); **how aggressively** to weight (hard prioritization vs. soft tilt with
+   exploration so we keep sampling); **time-windowing / decay** (all-time vs. trailing N weeks);
+   and whether the owner can **manually pin/exclude** niches. Then spec → plan → TDD → mock-first.
+   `compliance-reviewer` if any reply text reaches an LLM prompt (it should stay DATA — niche +
+   counts only).
 
 **LEFT UNDONE (built, never proven on real paths):**
 - **Inbound loop** — a real reply → Instantly poller → classifier → opportunity → brief → ship →

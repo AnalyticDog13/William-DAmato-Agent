@@ -80,6 +80,32 @@ export class JobQueue {
     this.setStatus(jobId, "succeeded", null);
   }
 
+  /**
+   * Reclaims jobs stuck in 'running' back to 'pending' so they run again. This
+   * is a SINGLE-PROCESS worker model: a job is only ever 'running' while this
+   * process holds it, so any 'running' job seen at worker startup is an orphan
+   * from a previous run that stopped or crashed mid-job. `claimNext` only picks
+   * 'pending', so without this an orphan is stranded forever — silently losing
+   * e.g. an owner-approved send. Attempts counted at claim are preserved so a
+   * job that keeps killing the worker still dead-letters at max_attempts rather
+   * than looping. Call once at worker startup. Returns the count touched.
+   */
+  reclaimRunning(): number {
+    const rows = this.db
+      .prepare(`SELECT id, attempts, max_attempts FROM jobs WHERE status = 'running'`)
+      .all() as { id: string; attempts: number; max_attempts: number }[];
+    for (const r of rows) {
+      if (r.attempts >= r.max_attempts) {
+        this.setStatus(r.id, "dead", "reclaimed after worker stop — attempts exhausted");
+      } else {
+        this.db
+          .prepare(`UPDATE jobs SET status = 'pending', run_at = ?, updated_at = ? WHERE id = ?`)
+          .run(nowIso(), nowIso(), r.id);
+      }
+    }
+    return rows.length;
+  }
+
   /** Retry with exponential backoff, or dead-letter when attempts exhausted. */
   fail(jobId: string, error: string): "retried" | "dead" {
     const row = this.db.prepare(`SELECT attempts, max_attempts FROM jobs WHERE id = ?`).get(jobId) as

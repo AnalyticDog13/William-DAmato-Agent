@@ -14,8 +14,23 @@ import {
   createVercelAdapter,
   stripeSignatureValid,
 } from "../src";
+import { callJson } from "../src/real/shared";
 
 const log = createLogger({ app: "test" }, () => {});
+
+describe("callJson HTTP timeout (a hung request can never stall the serial worker)", () => {
+  it("returns a failure result instead of hanging when the request never responds", async () => {
+    // A request that only ever settles if its AbortSignal fires.
+    const hangingFetch = ((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      })) as unknown as typeof fetch;
+    const started = Date.now();
+    const res = await callJson(hangingFetch, "https://example.test/x", { method: "GET" }, 60);
+    expect(res.ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(2000); // aborted promptly, not hung
+  }, 3000);
+});
 
 function ticket(dryRun: boolean): PolicyTicket {
   return {

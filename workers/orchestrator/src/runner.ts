@@ -62,6 +62,11 @@ export async function runUntilEmpty(ctx: AppContext, maxJobs = 500, clock?: () =
 
 /** Continuous worker loop for `npm run worker`. */
 export async function runForever(ctx: AppContext, pollMs = 1000): Promise<never> {
+  // Single-process model: any 'running' job at startup is an orphan from a prior
+  // run that stopped mid-job (claimNext only picks 'pending', so it would be
+  // stranded forever — e.g. an approved send that never reaches Instantly).
+  const reclaimed = ctx.store.queue.reclaimRunning();
+  if (reclaimed > 0) ctx.log.warn("reclaimed orphaned running jobs from a previous worker run", { count: reclaimed });
   ctx.log.info("orchestrator worker started", { env: ctx.config.env, dryRun: ctx.config.dryRun });
   // eslint-disable-next-line no-constant-condition
   while (true) {

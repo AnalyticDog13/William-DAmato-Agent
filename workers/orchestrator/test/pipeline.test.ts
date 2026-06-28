@@ -173,6 +173,43 @@ describe("phase D: react builds, revision loop, production deploy", () => {
   });
 });
 
+describe("send idempotency (reclaim safety)", () => {
+  it("a re-run of an already-sent draft is a no-op (never double-pushes)", async () => {
+    ingestLead(ctx, lead("Idem Biz", "https://idem-biz.example.com"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const approval = ctx.store.approvals.list({ status: "pending" })[0]!;
+    decideApproval(ctx, approval.id, "granted", "test");
+    ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: approval.subjectId }, traceId: approval.traceId, leadId: approval.leadId });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.campaignSyncs.count()).toBe(1);
+    expect(ctx.store.outreachDrafts.get(approval.subjectId)!.status).toBe("sent_dry_run");
+
+    // Worker died mid-job → the same send job is reclaimed and runs again.
+    ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: approval.subjectId }, traceId: approval.traceId, leadId: approval.leadId });
+    await runUntilEmpty(ctx, 100, futureClock);
+    expect(ctx.store.campaignSyncs.count()).toBe(1); // STILL one — no duplicate send
+  });
+});
+
+describe("send failure handling", () => {
+  it("a failed Instantly push does NOT mark the lead contacted — the job fails and retries", async () => {
+    ingestLead(ctx, lead("Fail Biz", "https://fail-biz.example.com"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const approval = ctx.store.approvals.list({ status: "pending" })[0]!;
+    decideApproval(ctx, approval.id, "granted", "test");
+    // Instantly rejects the push (HTTP error / network failure → ok:false).
+    ctx.integrations.instantly.pushLead = async () => ({ dryRun: false, ok: false, detail: "instantly.pushLead failed (HTTP 422): bad" });
+    ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: approval.subjectId }, traceId: approval.traceId, leadId: approval.leadId });
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    expect(ctx.store.leads.get(approval.leadId!)!.status).not.toBe("contacted");
+    expect(ctx.store.outreachDrafts.get(approval.subjectId)!.status).not.toBe("sent");
+    expect(ctx.store.campaignSyncs.count()).toBe(0); // nothing recorded as a successful send
+    const sendJob = ctx.store.queue.list().find((j) => j.type === "outreach.send")!;
+    expect(sendJob.status).toBe("dead"); // surfaced as a failure (retried to exhaustion), not silently "sent"
+  });
+});
+
 describe("follow-up sequence (no response → 2 polite bumps, owner-approved)", () => {
   /**
    * Intake → audit → draft → grant → dry-run send, then pins the score tier

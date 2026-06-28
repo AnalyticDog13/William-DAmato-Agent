@@ -38,13 +38,18 @@ export function createLlmAdapter(deps: RealDeps, log: Logger): LlmAdapter {
   const buildModel = deps.env.ANTHROPIC_BUILD_MODEL ?? "claude-sonnet-4-6";
   const outreachModel = deps.env.ANTHROPIC_OUTREACH_MODEL ?? globalModel;
   const visualModel = deps.env.ANTHROPIC_VISUAL_MODEL ?? globalModel;
+  // Anthropic completions (esp. build-prompt/transcript/vision) can legitimately
+  // run longer than the default 20s HTTP timeout; give them 60s so a slow-but-OK
+  // generation isn't aborted into the template fallback. All still fail-closed.
+  const anthropicCall = (init: RequestInit) =>
+    callJson(fetchImpl, "https://api.anthropic.com/v1/messages", init, 60_000);
   return {
     name: "anthropic",
     async generateBuildPrompt(ticket, input) {
       requireTicket(ticket, "llm.generateBuildPrompt");
       if (ticket.dryRun) return templateBuildPrompt(input);
 
-      const res = await callJson(fetchImpl, "https://api.anthropic.com/v1/messages", {
+      const res = await anthropicCall({
         method: "POST",
         headers: {
           "x-api-key": apiKey,
@@ -72,7 +77,7 @@ export function createLlmAdapter(deps: RealDeps, log: Logger): LlmAdapter {
       // Dry-run (always true in local) → null so the caller keeps its template.
       if (ticket.dryRun) return null;
 
-      const res = await callJson(fetchImpl, "https://api.anthropic.com/v1/messages", {
+      const res = await anthropicCall({
         method: "POST",
         headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
         body: JSON.stringify({
@@ -98,7 +103,7 @@ export function createLlmAdapter(deps: RealDeps, log: Logger): LlmAdapter {
       // Dry-run (always true in local) → null so the caller keeps its regex result.
       if (ticket.dryRun) return null;
 
-      const res = await callJson(fetchImpl, "https://api.anthropic.com/v1/messages", {
+      const res = await anthropicCall({
         method: "POST",
         headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
         body: JSON.stringify({
@@ -120,7 +125,7 @@ export function createLlmAdapter(deps: RealDeps, log: Logger): LlmAdapter {
       // Dry-run (always true in local) → null so the caller keeps the deterministic extractor.
       if (ticket.dryRun) return null;
 
-      const res = await callJson(fetchImpl, "https://api.anthropic.com/v1/messages", {
+      const res = await anthropicCall({
         method: "POST",
         headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
         body: JSON.stringify({
@@ -144,7 +149,7 @@ export function createLlmAdapter(deps: RealDeps, log: Logger): LlmAdapter {
         type: "image",
         source: { type: "base64", media_type: img.mediaType, data: img.dataBase64 },
       }));
-      const res = await callJson(fetchImpl, "https://api.anthropic.com/v1/messages", {
+      const res = await anthropicCall({
         method: "POST",
         headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
         body: JSON.stringify({

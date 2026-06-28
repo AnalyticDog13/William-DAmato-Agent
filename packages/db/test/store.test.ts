@@ -169,6 +169,27 @@ describe("JobQueue", () => {
     expect(store.queue.claimNext(new Date(Date.now() + 61_000))).not.toBeNull();
   });
 
+  it("reclaims orphaned running jobs on worker restart (crash recovery)", () => {
+    const store = new Store(openMemoryDatabase());
+    const job = store.queue.enqueue({ type: "outreach.send", payload: {}, traceId: "trc" });
+    store.queue.claimNext(); // → running, then the worker stops/crashes mid-job
+    expect(store.queue.claimNext()).toBeNull(); // a 'running' job is never re-claimed
+
+    expect(store.queue.reclaimRunning()).toBe(1);
+
+    const reclaimed = store.queue.claimNext();
+    expect(reclaimed?.id).toBe(job.id); // runnable again → the approved send actually happens
+  });
+
+  it("dead-letters a reclaimed job whose attempts are already exhausted (no poison loop)", () => {
+    const store = new Store(openMemoryDatabase());
+    store.queue.enqueue({ type: "t", payload: {}, traceId: "trc", maxAttempts: 1 });
+    store.queue.claimNext(); // attempts → 1 == maxAttempts; worker dies before complete
+    expect(store.queue.reclaimRunning()).toBe(1);
+    expect(store.queue.list({ status: "dead" })).toHaveLength(1);
+    expect(store.queue.claimNext()).toBeNull();
+  });
+
   it("retries with backoff then dead-letters after maxAttempts", () => {
     const store = new Store(openMemoryDatabase());
     const job = store.queue.enqueue({ type: "t", payload: {}, traceId: "trc", maxAttempts: 2 });

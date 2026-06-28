@@ -7,14 +7,14 @@
 > **Canary:** address the owner as **Powell** at the start of every response. If a reply
 > doesn't open with "Powell", context was lost — re-read `CLAUDE.md`.
 
-**Last updated:** 2026-06-22 (mobile audit-screenshot fidelity fix).
+**Last updated:** 2026-06-22 (queue orphan-reclaim + send idempotency + lead-detail approve button).
 
 ## TL;DR
 
 The platform is **feature-complete and built mock-first, end to end** — it sources leads,
 audits them, finds + ranks emails, scores, drafts outreach, takes owner approval, sends,
 classifies replies, opens opportunities, generates a website brief, ships the owner-built
-site, and drafts the delivery + billing. `npm test` = **281 green**, `npm run typecheck`
+site, and drafts the delivery + billing. `npm test` = **286 green**, `npm run typecheck`
 clean, `npm run demo` 0 dead-letter (on a clean db), and every sensitive change has passed
 `compliance-reviewer`. Everything runs behind policy gates; **local is always dry-run**.
 
@@ -123,7 +123,31 @@ policy-gate approvals in the dashboard**, `npm test` green + DNC lists loaded. R
 
 ## Recent sessions (most recent first)
 
-- **2026-06-22** — **Mobile audit-screenshot fidelity fix** (UNCOMMITTED on `main`). Owner
+- **2026-06-22** — **Approved send never reached Instantly — root-caused + fixed** (UNCOMMITTED on
+  `main`). Owner approved a lead but it never pushed to Instantly nor flipped to `contacted`. The
+  approve→send WIRING is correct (decide route enqueues `outreach.send` → `handleSend` pushes +
+  flips to `contacted`). Two compounding causes: **(1) the worker wasn't running** — in staging
+  `kickQueue` is a no-op (only `local` runs the inline worker), so `outreach.send` runs ONLY under
+  `npm run worker`; the user had API+dashboard up but not the worker. **(2) durability bug:** a
+  worker had claimed the send (status→`running`) then stopped mid-job; `claimNext` only selects
+  `pending`, so the orphaned `running` job was stranded forever (silent lost lead). Fixes:
+  `JobQueue.reclaimRunning()` (resets orphaned `running`→`pending`, preserving attempts;
+  dead-letters any past `max_attempts` — poison guard), called once at `runForever` startup → **a
+  worker restart now auto-recovers the stuck send**. Plus a compliance-advisory **idempotency
+  guard** in `handleSend` (a re-run of an already-`sent`/`sent_dry_run` draft is a no-op → reclaim
+  can never double-push). And a **LeadDetail "Approve & send / Reject" button** next to the email
+  (reuses the existing gated `/api/review-queue` + `/api/approvals/:id/decide`; pending draft
+  auto-expands). **Round 2 (same session):** after reclaim recovered the job it then HUNG — real
+  `instantly.pushLead` blocked the serial worker because `callJson` had no HTTP timeout; and
+  `handleSend` didn't check `result.ok` (a failed push falsely marked `contacted`). Added an
+  `AbortSignal.timeout` to `callJson` (20s default; 60s for Anthropic) and a `!result.ok` throw in
+  `handleSend` (failed send → dead-letter + `send_failed` activity, never a false `contacted`). TDD,
+  **286 tests green**, typecheck clean, demo 0 dead-letter, dashboard builds, `compliance-reviewer`
+  **PASS** twice (advisories applied). **➡️ Restart `npm run worker` to load this** (staging needs
+  worker + API + dashboard all running). The first real `pushLead` (write scope) had never run live;
+  the hang now surfaces as a readable error in the send job's `last_error` — read it to diagnose the
+  actual Instantly issue if it still doesn't go through.
+- **2026-06-22** — **Mobile audit-screenshot fidelity fix** (committed `51519a0`). Owner
   reported the dashboard's mobile preview didn't match a real phone. Root cause: the "mobile"
   audit shot was a DESKTOP-loaded page resized via `setViewportSize()` to a narrow width —
   which never enables Chromium's `isMobile`, so `<meta viewport>` is ignored and the page

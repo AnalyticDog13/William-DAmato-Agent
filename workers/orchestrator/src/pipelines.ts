@@ -526,6 +526,14 @@ const handleDraft: JobHandler = async (ctx, job) => {
 const handleSend: JobHandler = async (ctx, job) => {
   const draft = ctx.store.outreachDrafts.get(job.payload.draftId as string);
   if (!draft) throw new Error(`Draft ${job.payload.draftId} not found`);
+  // Idempotency: a duplicate or RECLAIMED send job (the worker died after the
+  // push but before recording) for an already-sent draft is a no-op — never
+  // double-push to Instantly. Each touch is its own draft, so this only ever
+  // suppresses a re-run of the same one.
+  if (draft.status === "sent" || draft.status === "sent_dry_run") {
+    ctx.store.writeActivity(draft.leadId, "send_skipped_duplicate", `Send re-run for already-sent draft ${draft.id} — ignored`, { traceId: job.traceId });
+    return;
+  }
   const lead = ctx.store.leads.get(draft.leadId);
   const contact = ctx.store.contacts.get(draft.contactId);
   if (!lead || !contact?.email) throw new Error("Lead/contact missing for send");
@@ -570,6 +578,14 @@ const handleSend: JobHandler = async (ctx, job) => {
     companyName: ctx.store.companies.get(lead.companyId)?.name,
     customVariables: { subject: draft.subject, body: draft.body, opt_out: OPT_OUT_LINE },
   });
+  // A failed push must NOT be recorded as sent — throwing lets the queue retry
+  // (then dead-letter) and keeps the lead in its pre-send state so the owner sees
+  // it never went out, instead of a false "contacted". The draft stays unsent so
+  // a retry re-attempts it (the idempotency guard only skips truly-sent drafts).
+  if (!result.ok) {
+    ctx.store.writeActivity(lead.id, "send_failed", `Instantly push failed — will retry: ${result.detail}`, { traceId: job.traceId });
+    throw new Error(`Instantly push failed: ${result.detail}`);
+  }
   const now = nowIso();
   ctx.store.campaignSyncs.insert({
     id: newId("csync"),

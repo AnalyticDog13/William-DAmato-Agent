@@ -169,14 +169,38 @@ export function LeadDetail() {
   const { id } = useParams<{ id: string }>();
   const [t, setT] = useState<Timeline | null>(null);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  // The lead's pending first-touch email approval, if any — so it can be approved
+  // right here. Routes through the SAME SEND_FIRST_TOUCH gate + send screening as
+  // the Review Queue / Leads page; this is just another place to click it.
+  const [emailApproval, setEmailApproval] = useState<{ id: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadApproval = () =>
+    api<{ items: { id: string; leadId: string | null }[] }>("/api/review-queue").then((r) =>
+      setEmailApproval(r.items.find((a) => a.leadId === id) ?? null),
+    );
 
   useEffect(() => {
     if (!id) return;
     api<Timeline>(`/api/leads/${id}/timeline`).then(setT);
+    loadApproval();
   }, [id]);
 
   const reload = () => {
-    if (id) api<Timeline>(`/api/leads/${id}/timeline`).then(setT);
+    if (!id) return;
+    api<Timeline>(`/api/leads/${id}/timeline`).then(setT);
+    loadApproval();
+  };
+
+  const decideEmail = async (decision: "granted" | "rejected") => {
+    if (!emailApproval) return;
+    setBusy(true);
+    try {
+      await api(`/api/approvals/${emailApproval.id}/decide`, { method: "POST", body: JSON.stringify({ decision, note: "" }) });
+      reload();
+    } finally {
+      setBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -327,8 +351,19 @@ export function LeadDetail() {
       {t.drafts.length > 0 && (
         <div className="panel">
           <h3>Outreach drafts</h3>
+          {emailApproval && (
+            <div className="toolbar" style={{ marginBottom: 8, alignItems: "center" }}>
+              <span className="badge amber">email awaiting your approval</span>
+              <button className="approve" disabled={busy} onClick={() => decideEmail("granted")}>
+                Approve &amp; send
+              </button>
+              <button className="reject" disabled={busy} onClick={() => decideEmail("rejected")}>
+                Reject
+              </button>
+            </div>
+          )}
           {t.drafts.map((d) => (
-            <details key={d.id}>
+            <details key={d.id} open={d.status === "pending_approval"}>
               <summary><span className="badge amber">{d.status}</span> {d.subject}</summary>
               <pre className="report">{d.body}</pre>
             </details>

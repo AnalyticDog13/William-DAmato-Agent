@@ -29,14 +29,22 @@ export function simulatedReal(adapter: string, action: string, detail: string, p
   };
 }
 
+/** Default per-request timeout. A real adapter call runs ON the serial worker, so
+ * a hung connection (no response) would stall the WHOLE queue indefinitely — the
+ * timeout converts that into a normal failure result the caller can retry. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+
 /** Fetch + parse with uniform failure shape; adapters never throw on HTTP errors. */
 export async function callJson(
   fetchImpl: typeof fetch,
   url: string,
   init: RequestInit,
+  timeoutMs: number = DEFAULT_REQUEST_TIMEOUT_MS,
 ): Promise<{ ok: boolean; status: number; body: Record<string, unknown>; text: string }> {
   try {
-    const res = await fetchImpl(url, init);
+    // Bound the request so a hung connection can't freeze the worker; honor an
+    // explicit caller signal if one was provided.
+    const res = await fetchImpl(url, { ...init, signal: init.signal ?? AbortSignal.timeout(timeoutMs) });
     const text = await res.text();
     let body: Record<string, unknown> = {};
     try {
