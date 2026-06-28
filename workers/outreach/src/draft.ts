@@ -29,6 +29,11 @@ function joinAngles(angles: string[]): string {
   return `${angles[0]} and ${angles[1]}`;
 }
 
+/** Remove emdashes (—), en-dashes (–), and double-dashes (--) and replace with commas. */
+function stripDashes(s: string): string {
+  return s.replace(/\s*(?:—|–|--)\s*/g, ", ");
+}
+
 /**
  * Short, human first-touch email. Rules (owner spec):
  * - body <= 5 sentences (greeting, sign-off, P.S. excluded from count)
@@ -65,7 +70,7 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
   // Sanitize: audit angles or company.name may contain emdashes/en-dashes/double-dashes.
   // Replace them so validateDraft never rejects a legitimate draft due to source-data punctuation.
   // The OPT_OUT_LINE has no dash characters, so it is preserved verbatim.
-  body = body.replace(/\s*(?:—|–|--)\s*/g, ", ");
+  body = stripDashes(body);
 
   const now = nowIso();
   return {
@@ -75,13 +80,13 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
     leadId: lead.id,
     contactId: contact.id,
     variant: FIRST_TOUCH_VARIANT,
-    subject: `quick note about ${company.name}'s website`.slice(0, 70),
+    subject: stripDashes(`quick note about ${company.name}'s website`).slice(0, 70),
     body,
     personalizationNotes: [
       `niche: ${lead.niche}`,
       ...(firstName
         ? [`greeted by first name (${firstName})`]
-        : ["no contact name — generic greeting"]),
+        : ["no contact name, generic greeting"]),
     ],
     auditFindingsUsed: angles,
     status: "draft",

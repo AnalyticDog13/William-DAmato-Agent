@@ -88,10 +88,11 @@ describe("emdash sanitization in createFirstTouchDraft", () => {
     expect(validateDraft(draft)).toEqual([]);
   });
 
-  it("company.name containing an emdash is sanitized from body and validates clean", () => {
+  it("company.name containing an emdash is sanitized from body and subject, validates clean", () => {
     const companyWithDash = { ...company, name: "Joe — Coffee" };
     const draft = createFirstTouchDraft({ ...fixture(), company: companyWithDash });
     expect(/[—–]|--/.test(draft.body)).toBe(false);
+    expect(/[—–]|--/.test(draft.subject)).toBe(false);
     expect(validateDraft(draft)).toEqual([]);
   });
 
