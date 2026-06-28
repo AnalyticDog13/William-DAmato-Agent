@@ -9,87 +9,59 @@ import {
   type WebsiteAudit,
 } from "@william/core";
 
-/** The exact opt-out line every first-touch email must contain (CHANGE_COMPLIANCE_TEXT gate protects edits). */
-export const OPT_OUT_LINE = `Reply "I'm not interested" and you won't hear from me again.`;
+/** Friendly P.S. opt-out — compliance text validateDraft enforces. Comma, no emdash. */
+export const OPT_OUT_LINE = `P.S. If you'd rather not hear from me, just say the word and I'll take you off my list right away, no hard feelings!`;
 
 export interface DraftInput {
   lead: Lead;
   company: Company;
   contact: Contact;
   audit: WebsiteAudit;
-  variant?: string;
   traceId: string;
 }
 
-/**
- * First-touch copy variants the experiment engine may assign. v1 is the
- * default; every variant must satisfy validateDraft (opt-out line, Cornell
- * mention, mockup offer, length caps). The "already built a free mockup"
- * claim is owner-specified wording (compliance advisory B1) — keep verbatim.
- */
-export const FIRST_TOUCH_VARIANTS = ["v1-cornell-mockup", "v2-finding-first"] as const;
+/** The single first-touch variant id (experiments removed). */
+export const FIRST_TOUCH_VARIANT = "v1-cornell-mockup";
+
+function joinAngles(angles: string[]): string {
+  if (angles.length === 0) return "";
+  if (angles.length === 1) return angles[0]!;
+  return `${angles[0]} and ${angles[1]}`;
+}
 
 /**
- * Personalized, truthful first-touch draft. Rules (per owner spec):
- * short, niche-aware, mentions being a Cornell student, cites REAL audit
- * findings only, offers an already-built free mockup, includes the opt-out
- * line, professional-yet-friendly tone.
+ * Short, human first-touch email. Rules (owner spec):
+ * - body <= 5 sentences (greeting, sign-off, P.S. excluded from count)
+ * - no emdash / en-dash / double-dash
+ * - mentions being a Cornell student
+ * - cites REAL audit findings only (no invented claims)
+ * - offers an already-built free mockup
+ * - friendly P.S. opt-out (OPT_OUT_LINE)
+ * - no URL (website revealed only after the prospect replies)
  */
 export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
   const { lead, company, contact, audit } = input;
   const firstName = contact.name?.split(/\s+/)[0];
-  const greeting = firstName ? `Hi ${firstName},` : `Hi there,`;
-  const hook = NICHE_META[lead.niche].outreachHook;
+  const greeting = firstName ? `Dear ${firstName},` : `Hi there,`;
+  const niche = NICHE_META[lead.niche].label.toLowerCase();
+  const place = company.city ? `${company.city} ${niche}` : `local ${niche}`;
 
-  const requested = input.variant ?? FIRST_TOUCH_VARIANTS[0];
-  // Unknown variant must never kill the pipeline mid-draft: fall back to v1.
-  const variant = (FIRST_TOUCH_VARIANTS as readonly string[]).includes(requested)
-    ? requested
-    : FIRST_TOUCH_VARIANTS[0];
-
-  // Only claim what the audit actually found.
   const angles = audit.outreachAngles.slice(0, 2);
-  const findingLine =
+  const finding =
     angles.length > 0
-      ? `I took a look at ${audit.hasWebsite ? `your site` : `your online presence`} and noticed ${formatAngles(angles)}.`
-      : `I took a quick look at how ${company.name} shows up online and think there's real room to win more customers.`;
+      ? `I noticed ${joinAngles(angles)}, which probably costs you a few customers`
+      : `I think a few quick changes could help you get more customers from your site`;
 
-  // No link in outreach — we tease that the mockup is already built and share
-  // the website only after they reply. validateDraft enforces the no-URL rule.
-  const mockupOffer = `I've already built a free mockup of what a faster, mobile-friendly site for ${company.name} could look like — happy to send it over, no strings attached. If you like it, great; if not, you keep the ideas.`;
-  const signOff = [`Worth a look?`, "", `Best,`, `Will`, "", OPT_OUT_LINE];
-
-  let subject: string;
-  let body: string;
-  if (variant === "v2-finding-first") {
-    // Finding-led: the observation opens, the introduction follows.
-    const proposed = audit.hasWebsite
-      ? `noticed something on ${company.name}'s site`
-      : `a quick website idea for ${company.name}`;
-    subject = proposed.length <= 70 ? proposed : audit.hasWebsite ? "noticed something on your site" : "a quick website idea";
-    body = [
-      greeting,
-      "",
-      findingLine,
-      "",
-      `I'm Will — a Cornell student, and ${hook}. ${mockupOffer}`,
-      "",
-      ...signOff,
-    ].join("\n");
-  } else {
-    subject = audit.hasWebsite
-      ? `quick idea for ${company.name}'s website`
-      : `a website idea for ${company.name}`;
-    body = [
-      greeting,
-      "",
-      `I'm Will — a Cornell student, and ${hook}. ${findingLine}`,
-      "",
-      mockupOffer,
-      "",
-      ...signOff,
-    ].join("\n");
-  }
+  const body = [
+    greeting,
+    "",
+    `I'm Will, a student at Cornell, and I came across ${company.name} while looking at ${place} sites. ${finding}. I actually put together a quick mockup of how it could look, and I'd be happy to send it over if you want a peek. Either way, no worries at all if now's not a good time.`,
+    "",
+    `Thanks,`,
+    `Will`,
+    "",
+    OPT_OUT_LINE,
+  ].join("\n");
 
   const now = nowIso();
   return {
@@ -98,13 +70,14 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
     updatedAt: now,
     leadId: lead.id,
     contactId: contact.id,
-    variant,
-    subject,
+    variant: FIRST_TOUCH_VARIANT,
+    subject: `quick note about ${company.name}'s website`.slice(0, 70),
     body,
     personalizationNotes: [
-      `niche hook: ${lead.niche}`,
-      ...(firstName ? [`greeted by first name (${firstName})`] : ["no contact name available — generic greeting"]),
-      ...(variant !== requested ? [`unknown variant "${requested}" requested — fell back to ${variant}`] : []),
+      `niche: ${lead.niche}`,
+      ...(firstName
+        ? [`greeted by first name (${firstName})`]
+        : ["no contact name — generic greeting"]),
     ],
     auditFindingsUsed: angles,
     status: "draft",
@@ -114,17 +87,33 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
   };
 }
 
-function formatAngles(angles: string[]): string {
-  if (angles.length === 1) return angles[0]!;
-  return `${angles[0]} — and ${angles[1]}`;
-}
-
 /**
  * Detects a website link/URL in copy: an explicit http(s):// or www. prefix, or
  * a bare `word.tld` token on a common TLD. Used to keep links OUT of outreach.
  * (Email addresses are not URLs; the templates contain none.)
  */
-const URL_IN_COPY_RE = /(https?:\/\/|www\.[a-z0-9-]|\b[a-z0-9-]+\.(?:com|net|org|io|co|shop|store|app|dev|biz|us|cafe|site|online|xyz)\b)/i;
+const URL_IN_COPY_RE =
+  /(https?:\/\/|www\.[a-z0-9-]|\b[a-z0-9-]+\.(?:com|net|org|io|co|shop|store|app|dev|biz|us|cafe|site|online|xyz)\b)/i;
+
+/**
+ * Count sentences in the MESSAGE body — excludes the greeting line, sign-off
+ * lines ("Thanks,", "Will"), and the P.S. opt-out. Used by validateDraft to
+ * enforce the 5-sentence cap.
+ */
+export function countMessageSentences(body: string): number {
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const content = lines.filter(
+    (l) =>
+      !/^(hi|hey|dear|hello)\b/i.test(l) &&
+      !/^(thanks|best|cheers|regards|sincerely),?$/i.test(l) &&
+      !/^will$/i.test(l) &&
+      !/^p\.?s\.?/i.test(l),
+  );
+  return (content.join(" ").match(/[.!?](\s|$)/g) ?? []).length;
+}
 
 /** Hard rules a draft must satisfy before it may even be queued for approval. */
 export function validateDraft(draft: OutreachDraft): string[] {
@@ -132,7 +121,8 @@ export function validateDraft(draft: OutreachDraft): string[] {
   if (!draft.body.includes(OPT_OUT_LINE)) problems.push("missing opt-out line");
   if (!/cornell/i.test(draft.body)) problems.push("missing Cornell student mention");
   if (!/mockup/i.test(draft.body)) problems.push("missing free-mockup offer");
-  if (draft.body.length > 1200) problems.push(`too long (${draft.body.length} chars; keep it short)`);
+  if (/[—–]|--/.test(draft.body)) problems.push("contains an emdash");
+  if (countMessageSentences(draft.body) > 5) problems.push("body too long (>5 sentences)");
   if (draft.subject.length > 70) problems.push("subject too long");
   // Outreach must NOT contain a link — the mockup/website is revealed only
   // after the prospect engages.

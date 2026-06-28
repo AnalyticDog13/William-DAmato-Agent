@@ -77,7 +77,7 @@ describe("lead pipeline (dry run, mocks)", () => {
       const draft = ctx.store.outreachDrafts.list({ leadId: l.id })[0]!;
       expect(draft.status).toBe("pending_approval");
       expect(draft.body).toMatch(/Cornell/);
-      expect(draft.body).toMatch(/I'm not interested/);
+      expect(draft.body).toMatch(/rather not hear from me/);
       // CRITICAL: nothing was sent.
       expect(ctx.store.campaignSyncs.count()).toBe(0);
     }
