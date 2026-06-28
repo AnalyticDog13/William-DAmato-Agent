@@ -270,9 +270,19 @@ const handleScore: JobHandler = async (ctx, job) => {
 };
 
 const handleContact: JobHandler = async (ctx, job) => {
-  const lead = getLead(ctx, job);
+  let lead = getLead(ctx, job);
   const existing = ctx.store.contacts.list({ leadId: lead.id })[0];
   let contact: Contact | undefined = existing;
+
+  // Returns true when another lead (or another lead's contact) already owns this
+  // email address — used to block a duplicate reach-out before any audit runs.
+  const ownedByOtherLead = (email: string): boolean => {
+    const n = normalizeEmail(email) ?? email.toLowerCase();
+    return (
+      ctx.store.contacts.findByKey(`email:${n}`).some((c) => c.leadId !== lead.id) ||
+      ctx.store.leads.findByKey(`email:${n}`).some((l) => l.id !== lead.id)
+    );
+  };
 
   if (!contact) {
     const emailCtx = { siteUrl: lead.websiteUrl, companyName: ctx.store.companies.get(lead.companyId)?.name ?? null };
@@ -324,6 +334,14 @@ const handleContact: JobHandler = async (ctx, job) => {
     //    phone is intentionally null here — phones come from the audit, which runs
     //    AFTER contact in the new order; they are re-derivable at audit time.
     if (resolvedEmail) {
+      const resolvedNorm = normalizeEmail(resolvedEmail) ?? resolvedEmail.toLowerCase();
+      // Dedup: if another lead already owns this email, disqualify immediately
+      // so we never audit or send to the same address twice.
+      if (ownedByOtherLead(resolvedNorm)) {
+        setLeadStatus(ctx, lead, "disqualified", `Duplicate email ${resolvedNorm} — already reached out to on another lead`);
+        ctx.store.writeActivity(lead.id, "duplicate_email", `Email ${resolvedNorm} is already associated with another lead — will not contact`, { traceId: job.traceId });
+        return;
+      }
       const now = nowIso();
       contact = ctx.store.contacts.insert({
         id: newId("con"),
@@ -333,14 +351,19 @@ const handleContact: JobHandler = async (ctx, job) => {
         companyId: lead.companyId,
         name: null,
         role: null,
-        email: resolvedEmail,
+        email: resolvedNorm,
         emailSource: source,
         emailProvider: null,
         verification: "unverified",
         confidence: source === "website_published" ? 0.7 : 0.6,
         phone: null,
       });
-      if (foundOn) ctx.store.writeActivity(lead.id, "contact_found", `Email ${resolvedEmail} found by crawl on ${foundOn}`, { traceId: job.traceId });
+      if (foundOn) ctx.store.writeActivity(lead.id, "contact_found", `Email ${resolvedNorm} found by crawl on ${foundOn}`, { traceId: job.traceId });
+      // Register the discovered email as a lead identity key so future intakes
+      // dedup on it immediately (without waiting for handleContact to re-run).
+      if (!lead.identityKeys.includes(`email:${resolvedNorm}`)) {
+        lead = ctx.store.leads.save({ ...lead, identityKeys: [...lead.identityKeys, `email:${resolvedNorm}`] });
+      }
     } else if (lead.domain && credentialFor(ctx, "enrichment")) {
       // 4) Enrichment provider — ONLY when a real provider is configured
       //    (ENRICHMENT_API_KEY). This is NOT a guess: a configured provider
@@ -351,6 +374,13 @@ const handleContact: JobHandler = async (ctx, job) => {
       const enrichTicket = operationalTicket(ctx, "enrichment.findContacts", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId, credentialFor(ctx, "enrichment"));
       const best = (await ctx.integrations.enrichment.findContacts(enrichTicket, lead.domain))[0];
       if (best && !isPlaceholderEmail(best.email)) {
+        const bestNorm = normalizeEmail(best.email) ?? best.email.toLowerCase();
+        // Dedup: disqualify if another lead already owns this enriched address.
+        if (ownedByOtherLead(bestNorm)) {
+          setLeadStatus(ctx, lead, "disqualified", `Duplicate email ${bestNorm} — already reached out to on another lead`);
+          ctx.store.writeActivity(lead.id, "duplicate_email", `Email ${bestNorm} is already associated with another lead — will not contact`, { traceId: job.traceId });
+          return;
+        }
         const now = nowIso();
         contact = ctx.store.contacts.insert({
           id: newId("con"),
@@ -360,13 +390,17 @@ const handleContact: JobHandler = async (ctx, job) => {
           companyId: lead.companyId,
           name: best.name,
           role: best.role,
-          email: best.email,
+          email: bestNorm,
           emailSource: "enrichment",
           emailProvider: best.provider,
           verification: "unverified",
           confidence: best.confidence,
           phone: null,
         });
+        // Register discovered email as identity key for future intake dedup.
+        if (!lead.identityKeys.includes(`email:${bestNorm}`)) {
+          lead = ctx.store.leads.save({ ...lead, identityKeys: [...lead.identityKeys, `email:${bestNorm}`] });
+        }
       }
     }
   }

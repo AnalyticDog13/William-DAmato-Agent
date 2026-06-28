@@ -633,3 +633,117 @@ describe("push mode (task 15)", () => {
     expect(ctx.store.leads.get(l.id)!.status).toBe("contacted");
   });
 });
+
+// ─── Discovered-email dedup ───────────────────────────────────────────────────
+// An email resolved during handleContact (not provided at intake) must be
+// checked against contacts and lead identity keys already in the store.  If
+// another lead owns it the current lead is disqualified and neither a contact
+// nor a lead.audit job is created.  If the email is unique it is registered as
+// a lead identity key so future intakes dedup on it immediately.
+describe("discovered email dedup", () => {
+  // Helper: run handleContact for a given leadId.
+  async function runContactJob(leadId: string) {
+    const { JOB_HANDLERS } = await import("../src/pipelines");
+    const now = nowIso();
+    const job = {
+      id: newId("job"),
+      type: "lead.contact",
+      payload: { leadId },
+      status: "running" as const,
+      traceId: newTraceId(),
+      leadId,
+      runAt: now,
+      attempts: 0,
+      maxAttempts: 3,
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    return JOB_HANDLERS["lead.contact"]!(ctx, job);
+  }
+
+  // Helper: register a real enrichment credential so the enrichment rung fires.
+  function enableEnrichment() {
+    const existing = ctx.store.credentialStatuses.findByKey("integration:enrichment")[0];
+    const now = nowIso();
+    if (existing) {
+      ctx.store.credentialStatuses.save({ ...existing, mode: "sandbox" });
+      return;
+    }
+    ctx.store.credentialStatuses.insert({
+      id: newId("cred"),
+      createdAt: now,
+      updatedAt: now,
+      integration: "enrichment" as "anthropic",
+      mode: "sandbox",
+      healthy: true,
+      lastCheckedAt: now,
+      detail: "test",
+    });
+  }
+
+  it("lead2 that discovers the same email as lead1 is disqualified — no dup contact, no lead.audit", async () => {
+    // Lead1: owner-provided email → contact registered at intake, identity key set.
+    const r1 = ingestLead(ctx, lead("Biz One", "https://biz-one.example.com", "shared@biz-one.example.com"));
+    if (r1.outcome !== "created") throw new Error("expected created");
+
+    // Lead2: no email at intake; enrichment resolves the SAME address.
+    const r2 = ingestLead(ctx, lead("Biz Two", "https://biz-two.example.com"));
+    if (r2.outcome !== "created") throw new Error("expected created");
+    const l2 = r2.lead;
+
+    enableEnrichment();
+    ctx.browserLauncher = async () => null; // crawl finds nothing
+    ctx.integrations.enrichment.findContacts = async () => [
+      { email: "shared@biz-one.example.com", name: null, role: null, confidence: 0.8, provider: "stub" },
+    ];
+
+    await runContactJob(l2.id);
+
+    // Lead2 is disqualified with a duplicate-email reason.
+    const updated = ctx.store.leads.get(l2.id)!;
+    expect(updated.status).toBe("disqualified");
+    expect(updated.disqualifiedReason).toMatch(/duplicate email/i);
+
+    // No contact was created for lead2.
+    expect(ctx.store.contacts.list({ leadId: l2.id })).toHaveLength(0);
+
+    // No lead.audit job enqueued for lead2.
+    expect(ctx.store.queue.list().some((j) => j.type === "lead.audit" && j.leadId === l2.id)).toBe(false);
+
+    // A duplicate_email activity was written.
+    expect(ctx.store.activity.list({ leadId: l2.id }).some((a) => a.kind === "duplicate_email")).toBe(true);
+  });
+
+  it("a unique discovered email is registered as a lead identity key and lead.audit is enqueued", async () => {
+    const r = ingestLead(ctx, lead("Unique Biz", "https://unique-biz.example.com"));
+    if (r.outcome !== "created") throw new Error("expected created");
+    const l = r.lead;
+
+    enableEnrichment();
+    ctx.browserLauncher = async () => null;
+    ctx.integrations.enrichment.findContacts = async () => [
+      { email: "owner@unique-biz.example.com", name: "Owner", role: "owner", confidence: 0.8, provider: "stub" },
+    ];
+
+    await runContactJob(l.id);
+
+    // Identity key must include the discovered email.
+    const updated = ctx.store.leads.get(l.id)!;
+    expect(updated.identityKeys).toContain("email:owner@unique-biz.example.com");
+
+    // A contact was created with the normalized email.
+    const contacts = ctx.store.contacts.list({ leadId: l.id });
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0]!.email).toBe("owner@unique-biz.example.com");
+
+    // lead.audit was enqueued.
+    expect(ctx.store.queue.list().some((j) => j.type === "lead.audit" && j.leadId === l.id)).toBe(true);
+  });
+
+  it("regression: duplicate leads by intake identity key still refused", () => {
+    expect(ingestLead(ctx, lead("Test Barbers")).outcome).toBe("created");
+    expect(ingestLead(ctx, lead("Test Barbers LLC", null)).outcome).toBe("duplicate");
+    expect(ingestLead(ctx, lead("Different Name", "http://www.test-biz.example.com/home")).outcome).toBe("duplicate");
+  });
+});
