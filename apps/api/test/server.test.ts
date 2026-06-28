@@ -66,38 +66,6 @@ describe("API auth (server-side, every route)", () => {
   });
 });
 
-describe("owner-triggered preview deploy API", () => {
-  function insertProject(previewPath: string | null) {
-    const now = new Date().toISOString();
-    const leadId = `lead_pv_${Math.random().toString(36).slice(2, 8)}`;
-    return ctx.store.siteProjects.insert({
-      id: `sp_${Math.random().toString(36).slice(2, 10)}`,
-      createdAt: now,
-      updatedAt: now,
-      leadId,
-      opportunityId: null,
-      templateId: "barber-classic",
-      niche: "barbershop",
-      status: "preview_ready",
-      previewUrl: null,
-      previewPath,
-      stack: "static",
-      buildPath: null,
-      screenshotPaths: [],
-      rationale: "",
-      companyData: {},
-      missingInputs: [],
-      qualityCheck: null,
-    });
-  }
-
-  it("409s when the project has no artifact", async () => {
-    ctx.config.williamBuildsWebsites = true;
-    const project = insertProject(null);
-    expect((await authed(`/api/site-projects/${project.id}/deploy-preview`, { method: "POST" })).status).toBe(409);
-  });
-
-});
 
 describe("transcript ingestion API", () => {
   it("rejects missing source/text and oversized payloads", async () => {
@@ -164,41 +132,6 @@ describe("lead + approval flow over HTTP", () => {
   });
 });
 
-describe("builder routes disabled when WILLIAM_BUILDS_WEBSITES=false (default)", () => {
-  it("revisions, request-deploy, and deploy-preview all return 403 builder_disabled", async () => {
-    ctx.config.williamBuildsWebsites = false;
-    const now = new Date().toISOString();
-    const project = ctx.store.siteProjects.insert({
-      id: `sp_off_${Math.random().toString(36).slice(2, 10)}`,
-      createdAt: now,
-      updatedAt: now,
-      leadId: `lead_off_${Math.random().toString(36).slice(2, 8)}`,
-      opportunityId: null,
-      templateId: "barber-classic",
-      niche: "barbershop",
-      status: "preview_ready",
-      previewUrl: null,
-      previewPath: "C:/tmp/preview/index.html", // has an artifact: proves 403 is the flag, not a 409
-      stack: "static",
-      buildPath: null,
-      screenshotPaths: [],
-      rationale: "",
-      companyData: {},
-      missingInputs: [],
-      qualityCheck: null,
-    });
-    const rev = await authed(`/api/site-projects/${project.id}/revisions`, {
-      method: "POST",
-      body: JSON.stringify({ request: "change tagline", overrides: { tagline: "x" } }),
-    });
-    expect(rev.status).toBe(403);
-    expect(((await rev.json()) as { error: string }).error).toBe("builder_disabled");
-    expect((await authed(`/api/site-projects/${project.id}/request-deploy`, { method: "POST" })).status).toBe(403);
-    expect((await authed(`/api/site-projects/${project.id}/deploy-preview`, { method: "POST" })).status).toBe(403);
-    // Unknown projects still 404 (the flag check never masks not_found).
-    expect((await authed("/api/site-projects/site_nope/revisions", { method: "POST", body: JSON.stringify({ request: "x" }) })).status).toBe(404);
-  });
-});
 
 describe("sourcing-runs API", () => {
   it("POST /api/sourcing-runs creates a run + ACTIVATE_NEW_LEAD_SOURCE approval", async () => {

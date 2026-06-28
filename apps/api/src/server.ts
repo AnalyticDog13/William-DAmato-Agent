@@ -17,10 +17,6 @@ import { requireOwner, resolveOwnerToken } from "./auth";
 import { cors, rateLimit, securityHeaders } from "./security";
 import { webhookRoutes } from "./webhooks";
 
-/** Returned by the builder routes when WILLIAM_BUILDS_WEBSITES is off (the default). */
-const BUILDER_DISABLED_DETAIL =
-  "William's website builder is disabled (WILLIAM_BUILDS_WEBSITES=false). William generates a WebsiteBrief for the owner to build, then ships the owner's finished repo. Set WILLIAM_BUILDS_WEBSITES=true to re-enable the self-builder.";
-
 /** Collections the dashboard may list. Server-side whitelist — no dynamic table access. */
 function collections(ctx: AppContext): Record<string, Repository<any>> {
   const s = ctx.store;
@@ -32,23 +28,10 @@ function collections(ctx: AppContext): Record<string, Repository<any>> {
     "lead-scores": s.leadScores,
     "outreach-drafts": s.outreachDrafts,
     "campaign-syncs": s.campaignSyncs,
-    replies: s.replyEvents,
-    opportunities: s.opportunities,
-    "site-projects": s.siteProjects,
-    "site-revisions": s.siteRevisions,
-    "website-briefs": s.websiteBriefs,
     "sourcing-runs": s.sourcingRuns,
     approvals: s.approvals,
-    deployments: s.deployments,
-    "invoice-drafts": s.invoiceDrafts,
-    payments: s.payments,
-    "call-suggestions": s.callSuggestions,
-    bookings: s.bookings,
     failures: s.failures,
-    experiments: s.experiments,
-    "experiment-results": s.experimentResults,
     "daily-memories": s.dailyMemories,
-    "weekly-reports": s.weeklyReports,
     lessons: s.lessons,
     "owner-requests": s.ownerRequests,
     integrations: s.credentialStatuses,
@@ -122,8 +105,6 @@ export function createServer(ctx: AppContext): Express {
       res.status(404).json({ error: "not_found" });
       return;
     }
-    const siteProjects = ctx.store.siteProjects.list({ leadId: lead.id });
-    const projectIds = new Set(siteProjects.map((p) => p.id));
     res.json({
       lead,
       company: ctx.store.companies.get(lead.companyId),
@@ -131,13 +112,6 @@ export function createServer(ctx: AppContext): Express {
       audits: ctx.store.audits.list({ leadId: lead.id }),
       scores: ctx.store.leadScores.list({ leadId: lead.id }),
       drafts: ctx.store.outreachDrafts.list({ leadId: lead.id }),
-      replies: ctx.store.replyEvents.list({ leadId: lead.id }),
-      opportunities: ctx.store.opportunities.list({ leadId: lead.id }),
-      siteProjects,
-      siteRevisions: ctx.store.siteRevisions.list({ limit: 200 }).filter((r) => projectIds.has(r.siteProjectId)),
-      deployments: ctx.store.deployments.list({ limit: 200 }).filter((d) => d.siteProjectId !== null && projectIds.has(d.siteProjectId)),
-      invoices: ctx.store.invoiceDrafts.list({ leadId: lead.id }),
-      callSuggestions: ctx.store.callSuggestions.list({ leadId: lead.id }),
       activity: ctx.store.activity.list({ leadId: lead.id, limit: 200, order: "asc" }),
     });
   });
@@ -179,21 +153,11 @@ export function createServer(ctx: AppContext): Express {
         // Gate-specific follow-through jobs.
         if (approval.gate === "SEND_FIRST_TOUCH") {
           ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: approval.subjectId }, traceId: approval.traceId, leadId: approval.leadId });
-        } else if (approval.gate === "SEND_PAYMENT_REQUEST") {
-          ctx.store.queue.enqueue({ type: "billing.execute", payload: { invoiceDraftId: approval.subjectId }, traceId: approval.traceId, leadId: approval.leadId });
         } else if (approval.gate === "ACTIVATE_NEW_LEAD_SOURCE") {
           const run = ctx.store.sourcingRuns.get(approval.subjectId);
           if (run) {
             ctx.store.sourcingRuns.save({ ...run, status: "running", updatedAt: nowIso() });
             ctx.store.queue.enqueue({ type: "lead.source", payload: { sourcingRunId: run.id }, traceId: approval.traceId });
-          }
-        } else if (approval.gate === "DEPLOY_PRODUCTION") {
-          // Same gate, two paths: ship the owner's repo (business head) vs
-          // deploy William's own artifact (builder re-enabled).
-          if (approval.subjectType === "WebsiteBrief") {
-            ctx.store.queue.enqueue({ type: "site.ship", payload: { websiteBriefId: approval.subjectId, approvalRequestId: approval.id }, traceId: approval.traceId, leadId: approval.leadId });
-          } else {
-            ctx.store.queue.enqueue({ type: "deploy.production", payload: { siteProjectId: approval.subjectId, approvalRequestId: approval.id }, traceId: approval.traceId, leadId: approval.leadId });
           }
         }
       } else if (decision === "rejected" && approval.gate === "SEND_FIRST_TOUCH") {
@@ -207,140 +171,6 @@ export function createServer(ctx: AppContext): Express {
     } catch (err) {
       res.status(409).json({ error: err instanceof Error ? err.message : "decide_failed" });
     }
-  });
-
-  // Revision loop: owner submits a change request; structured overrides are
-  // applied by the site.revise job, free text alone is rejected with guidance.
-  api.post("/site-projects/:id/revisions", async (req, res) => {
-    const project = ctx.store.siteProjects.get(req.params.id!);
-    if (!project) {
-      res.status(404).json({ error: "not_found" });
-      return;
-    }
-    if (!ctx.config.williamBuildsWebsites) {
-      res.status(403).json({ error: "builder_disabled", detail: BUILDER_DISABLED_DETAIL });
-      return;
-    }
-    const body = req.body as { request?: unknown; overrides?: unknown };
-    if (typeof body.request !== "string" || !body.request.trim()) {
-      res.status(400).json({ error: "request text is required" });
-      return;
-    }
-    const overrides =
-      body.overrides && typeof body.overrides === "object" && !Array.isArray(body.overrides)
-        ? (body.overrides as Record<string, unknown>)
-        : {};
-    const now = nowIso();
-    const revision = ctx.store.siteRevisions.insert({
-      id: newId("rev"),
-      createdAt: now,
-      updatedAt: now,
-      siteProjectId: project.id,
-      requestedBy: "owner",
-      request: body.request.trim(),
-      overrides,
-      status: "pending",
-      resultNote: "",
-    });
-    ctx.store.siteProjects.save({ ...project, status: "revisions", updatedAt: now });
-    const traceId = newTraceId();
-    ctx.store.queue.enqueue({ type: "site.revise", payload: { revisionId: revision.id }, traceId, leadId: project.leadId });
-    await kickQueue(ctx);
-    res.status(201).json({ revision: ctx.store.siteRevisions.get(revision.id) });
-  });
-
-  // Owner approves the preview for the customer → DEPLOY_PRODUCTION approval
-  // request. Quality gate first; the granted approval enqueues deploy.production.
-  api.post("/site-projects/:id/request-deploy", (req, res) => {
-    const project = ctx.store.siteProjects.get(req.params.id!);
-    if (!project) {
-      res.status(404).json({ error: "not_found" });
-      return;
-    }
-    if (!ctx.config.williamBuildsWebsites) {
-      res.status(403).json({ error: "builder_disabled", detail: BUILDER_DISABLED_DETAIL });
-      return;
-    }
-    if (!project.previewPath && !project.buildPath) {
-      res.status(409).json({ error: "no_artifact", detail: "Project has no preview or build to deploy" });
-      return;
-    }
-    if (project.qualityCheck && (project.qualityCheck.lighthousePassed === false || project.qualityCheck.a11yPassed === false)) {
-      res.status(409).json({ error: "quality_failed", detail: "Preview failed its quality check — revise before requesting a deploy" });
-      return;
-    }
-    const lead = ctx.store.leads.get(project.leadId);
-    const company = lead ? ctx.store.companies.get(lead.companyId) : null;
-    const approval = requestApproval(ctx, {
-      gate: "DEPLOY_PRODUCTION",
-      subjectType: "SiteProject",
-      subjectId: project.id,
-      leadId: project.leadId,
-      title: `Deploy ${company?.name ?? project.leadId} site to production`,
-      detail: `Template ${project.templateId} (${project.stack} stack). ${project.qualityCheck ? "Quality check passed." : "No quality check ran (mock/http auditor mode)."}`,
-      traceId: newTraceId(),
-    });
-    ctx.store.siteProjects.save({ ...project, status: "approved_for_customer", updatedAt: nowIso() });
-    res.status(201).json({ approval });
-  });
-
-  // Owner-triggered preview deploy (operational; production has its own gate).
-  // Auto-deploys were removed deliberately — compliance advisory D4.
-  api.post("/site-projects/:id/deploy-preview", async (req, res) => {
-    const project = ctx.store.siteProjects.get(req.params.id!);
-    if (!project) {
-      res.status(404).json({ error: "not_found" });
-      return;
-    }
-    if (!ctx.config.williamBuildsWebsites) {
-      res.status(403).json({ error: "builder_disabled", detail: BUILDER_DISABLED_DETAIL });
-      return;
-    }
-    if (!project.previewPath && !project.buildPath) {
-      res.status(409).json({ error: "no_artifact", detail: "Project has no preview or build to deploy" });
-      return;
-    }
-    const job = ctx.store.queue.enqueue({
-      type: "deploy.preview",
-      payload: { siteProjectId: project.id },
-      traceId: newTraceId(),
-      leadId: project.leadId,
-    });
-    await kickQueue(ctx);
-    res.status(202).json({ jobId: job.id });
-  });
-
-  // Business head: owner marks a WebsiteBrief's site ready + pastes the repo URL.
-  // Records the repo and opens a DEPLOY_PRODUCTION approval; granting it ships
-  // (site.ship) the owner's repo. No GitHub webhook — dashboard action only.
-  api.post("/website-briefs/:id/ship", (req, res) => {
-    const brief = ctx.store.websiteBriefs.get(req.params.id!);
-    if (!brief) {
-      res.status(404).json({ error: "not_found" });
-      return;
-    }
-    const repoUrl = (req.body as { repoUrl?: unknown }).repoUrl;
-    if (typeof repoUrl !== "string" || !/^https?:\/\/\S+$/.test(repoUrl.trim())) {
-      res.status(400).json({ error: "a valid repoUrl (http/https) is required" });
-      return;
-    }
-    if (brief.status === "shipped") {
-      res.status(409).json({ error: "already_shipped" });
-      return;
-    }
-    ctx.store.websiteBriefs.save({ ...brief, repoUrl: repoUrl.trim() });
-    const lead = ctx.store.leads.get(brief.leadId);
-    const company = lead ? ctx.store.companies.get(lead.companyId) : null;
-    const approval = requestApproval(ctx, {
-      gate: "DEPLOY_PRODUCTION",
-      subjectType: "WebsiteBrief",
-      subjectId: brief.id,
-      leadId: brief.leadId,
-      title: `Ship ${company?.name ?? brief.leadId} site to production`,
-      detail: `Owner-built repo: ${repoUrl.trim()}`,
-      traceId: newTraceId(),
-    });
-    res.status(201).json({ approval });
   });
 
   // Sourcing runs: owner triggers a one-click batch lead-sourcing session.
@@ -468,23 +298,6 @@ export function createServer(ctx: AppContext): Express {
   api.get("/reports/daily", (_req, res) => {
     const { memory, reportText } = generateDailyReport(ctx);
     res.json({ memory, reportText });
-  });
-
-  // Preview artifact for side-by-side review (auth applies; path is fixed server-side).
-  api.get("/previews/:leadId", (req, res) => {
-    const project = ctx.store.siteProjects.list({ leadId: req.params.leadId, limit: 1 })[0];
-    if (!project?.previewPath) {
-      res.status(404).json({ error: "no_preview" });
-      return;
-    }
-    const path = resolve(project.previewPath);
-    const expectedRoot = resolve(join(ctx.config.dataDir, "previews"));
-    if (!path.startsWith(expectedRoot + sep) || !existsSync(path)) {
-      res.status(404).json({ error: "no_preview" });
-      return;
-    }
-    res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:");
-    res.sendFile(path);
   });
 
   // Audit/preview screenshots (auth applies; basename + root-prefix guard against traversal).

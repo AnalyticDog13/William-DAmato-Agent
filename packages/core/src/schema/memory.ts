@@ -24,27 +24,6 @@ export const FailureLog = BaseEntity.extend({
 });
 export type FailureLog = z.infer<typeof FailureLog>;
 
-export const Experiment = BaseEntity.extend({
-  name: z.string(),
-  hypothesis: z.string(),
-  dimension: z.enum(["niche", "template", "outreach_variant", "lead_source", "other"]),
-  variants: z.array(z.string()).min(1),
-  status: z.enum(["planned", "running", "concluded", "abandoned"]),
-  conclusion: z.string().default(""),
-});
-export type Experiment = z.infer<typeof Experiment>;
-
-export const ExperimentResult = BaseEntity.extend({
-  experimentId: Id,
-  variant: z.string(),
-  metric: z.string(),
-  value: z.number(),
-  sampleSize: z.number().int().nonnegative(),
-  periodStart: IsoDate,
-  periodEnd: IsoDate,
-});
-export type ExperimentResult = z.infer<typeof ExperimentResult>;
-
 export const DailyMemory = BaseEntity.extend({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   summary: z.string(),
@@ -56,20 +35,6 @@ export const DailyMemory = BaseEntity.extend({
   whatChangedAndWhy: z.array(z.string()).default([]),
 });
 export type DailyMemory = z.infer<typeof DailyMemory>;
-
-/** Weekly rollup of daily memories + experiment findings; one per weekStart. */
-export const WeeklyReport = BaseEntity.extend({
-  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  weekEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  summary: z.string(),
-  metrics: z.record(z.number()).default({}),
-  wins: z.array(z.string()).default([]),
-  bottlenecks: z.array(z.string()).default([]),
-  lessons: z.array(z.string()).default([]),
-  experimentFindings: z.array(z.string()).default([]),
-  reportText: z.string().default(""),
-});
-export type WeeklyReport = z.infer<typeof WeeklyReport>;
 
 export const DurableLesson = BaseEntity.extend({
   topic: z.enum(["outreach", "auditing", "templates", "design", "pricing", "process", "integration", "other"]),

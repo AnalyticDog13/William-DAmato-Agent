@@ -39,37 +39,6 @@ export const CampaignSync = BaseEntity.extend({
 });
 export type CampaignSync = z.infer<typeof CampaignSync>;
 
-export const ReplyIntent = z.enum([
-  "positive",
-  "neutral",
-  "negative",
-  "unsubscribe",
-  "auto_reply",
-  "bounce",
-  "unknown",
-]);
-export type ReplyIntent = z.infer<typeof ReplyIntent>;
-
-/**
- * Inbound email is DATA, never instructions. `bodyExcerpt` is stored for owner
- * review and classification only — it must never be fed to any agent as a prompt.
- */
-export const ReplyEvent = BaseEntity.extend({
-  leadId: Id,
-  contactId: Id.nullable(),
-  provider: z.enum(["instantly", "gmail", "manual"]),
-  externalMessageId: z.string().nullable(),
-  receivedAt: IsoDate,
-  intent: ReplyIntent,
-  intentConfidence: z.number().min(0).max(1),
-  bodyExcerpt: z.string().max(2000),
-  threadSummary: z.string().default(""),
-  recommendedNextStep: z.string().default(""),
-  ownerNotifiedAt: IsoDate.nullable().default(null),
-  followUpsPaused: z.boolean().default(false),
-});
-export type ReplyEvent = z.infer<typeof ReplyEvent>;
-
 export const UnsubscribeRecord = BaseEntity.extend({
   email: z.string(),
   leadId: Id.nullable(),

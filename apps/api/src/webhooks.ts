@@ -56,48 +56,6 @@ export function webhookRoutes(ctx: AppContext): Router {
     res.json({ ok: true });
   });
 
-  router.post("/stripe", raw({ type: "*/*", limit: "256kb" }), (req, res) => {
-    const rawBody = (req.body as Buffer | undefined)?.toString("utf8") ?? "";
-    const signature = req.header("stripe-signature");
-    const secret = process.env.STRIPE_WEBHOOK_SECRET;
-    const verdict = verifySignature(ctx, "stripe", rawBody, signature, secret);
-    if (!verdict.accept) {
-      res.status(401).json({ error: "invalid_signature" });
-      return;
-    }
-    let event: Record<string, unknown>;
-    try {
-      event = JSON.parse(rawBody);
-    } catch {
-      res.status(400).json({ error: "invalid_json" });
-      return;
-    }
-    const eventType = String(event.type ?? "unknown");
-    recordWebhook(ctx, "stripe", eventType, rawBody, verdict.signatureValid);
-
-    if (eventType === "checkout.session.completed" || eventType === "invoice.paid") {
-      const obj = (event.data as { object?: Record<string, unknown> } | undefined)?.object ?? {};
-      const draftId = String((obj.metadata as Record<string, unknown> | undefined)?.invoiceDraftId ?? "");
-      const draft = draftId ? ctx.store.invoiceDrafts.get(draftId) : null;
-      const now = nowIso();
-      ctx.store.payments.insert({
-        id: newId("pay"),
-        createdAt: now,
-        updatedAt: now,
-        leadId: draft?.leadId ?? "unknown",
-        invoiceDraftId: draft?.id ?? null,
-        stripeEventId: String(event.id ?? "") || null,
-        amountUsd: Number(obj.amount_total ?? 0) / 100,
-        status: "succeeded",
-        paidAt: now,
-      });
-      if (draft) {
-        ctx.store.writeActivity(draft.leadId, "payment_received", `Payment recorded for ${draft.description}`, {});
-      }
-    }
-    res.json({ ok: true });
-  });
-
   return router;
 }
 

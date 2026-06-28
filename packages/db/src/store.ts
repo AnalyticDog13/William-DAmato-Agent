@@ -2,37 +2,24 @@ import {
   ActivityEvent,
   ApprovalRequest,
   AuditLogEntry,
-  BookingRecord,
-  CallSuggestion,
   CampaignSync,
   Company,
   ComplianceEvent,
   Contact,
   DailyMemory,
-  DeploymentRecord,
   DoNotContactRecord,
   DurableLesson,
-  Experiment,
-  ExperimentResult,
   FailureLog,
   GatePolicy,
   IntegrationCredentialStatus,
-  InvoiceDraft,
   Lead,
   LeadScore,
-  Opportunity,
   OutreachDraft,
   OwnerRequest,
-  PaymentRecord,
-  ReplyEvent,
-  SiteProject,
-  SiteRevision,
   SourcingRun,
   UnsubscribeRecord,
   WebhookEventRecord,
   WebsiteAudit,
-  WebsiteBrief,
-  WeeklyReport,
   newId,
   nowIso,
 } from "@william/core";
@@ -61,23 +48,10 @@ export class Store {
   readonly leadScores: Repository<LeadScore>;
   readonly outreachDrafts: Repository<OutreachDraft>;
   readonly campaignSyncs: Repository<CampaignSync>;
-  readonly replyEvents: Repository<ReplyEvent>;
-  readonly opportunities: Repository<Opportunity>;
-  readonly siteProjects: Repository<SiteProject>;
-  readonly siteRevisions: Repository<SiteRevision>;
-  readonly websiteBriefs: Repository<WebsiteBrief>;
   readonly sourcingRuns: Repository<SourcingRun>;
   readonly approvals: Repository<ApprovalRequest>;
-  readonly deployments: Repository<DeploymentRecord>;
-  readonly invoiceDrafts: Repository<InvoiceDraft>;
-  readonly payments: Repository<PaymentRecord>;
-  readonly callSuggestions: Repository<CallSuggestion>;
-  readonly bookings: Repository<BookingRecord>;
   readonly failures: Repository<FailureLog>;
-  readonly experiments: Repository<Experiment>;
-  readonly experimentResults: Repository<ExperimentResult>;
   readonly dailyMemories: Repository<DailyMemory>;
-  readonly weeklyReports: Repository<WeeklyReport>;
   readonly lessons: Repository<DurableLesson>;
   readonly ownerRequests: Repository<OwnerRequest>;
   readonly credentialStatuses: Repository<IntegrationCredentialStatus>;
@@ -141,38 +115,6 @@ export class Store {
       leadId: (c) => c.leadId,
       status: (c) => c.status,
     });
-    this.replyEvents = repo<ReplyEvent>({
-      collection: "reply_events",
-      schema: ReplyEvent,
-      leadId: (r) => r.leadId,
-      status: (r) => r.intent,
-    });
-    this.opportunities = repo<Opportunity>({
-      collection: "opportunities",
-      schema: Opportunity,
-      leadId: (o) => o.leadId,
-      status: (o) => o.stage,
-    });
-    this.siteProjects = repo<SiteProject>({
-      collection: "site_projects",
-      schema: SiteProject,
-      leadId: (s) => s.leadId,
-      status: (s) => s.status,
-      skey: (s) => s.templateId,
-    });
-    this.siteRevisions = repo<SiteRevision>({
-      collection: "site_revisions",
-      schema: SiteRevision,
-      status: (r) => r.status,
-      skey: (r) => r.siteProjectId,
-    });
-    this.websiteBriefs = repo<WebsiteBrief>({
-      collection: "website_briefs",
-      schema: WebsiteBrief,
-      leadId: (b) => b.leadId,
-      status: (b) => b.status,
-      skey: (b) => b.opportunityId,
-    });
     this.sourcingRuns = repo<SourcingRun>({
       collection: "sourcing_runs",
       schema: SourcingRun,
@@ -186,36 +128,6 @@ export class Store {
       skey: (a) => a.gate,
       keys: (a) => [`subject:${a.gate}:${a.subjectId}`],
     });
-    this.deployments = repo<DeploymentRecord>({
-      collection: "deployments",
-      schema: DeploymentRecord,
-      status: (d) => d.status,
-      skey: (d) => d.target,
-    });
-    this.invoiceDrafts = repo<InvoiceDraft>({
-      collection: "invoice_drafts",
-      schema: InvoiceDraft,
-      leadId: (i) => i.leadId,
-      status: (i) => i.status,
-    });
-    this.payments = repo<PaymentRecord>({
-      collection: "payments",
-      schema: PaymentRecord,
-      leadId: (p) => p.leadId,
-      status: (p) => p.status,
-    });
-    this.callSuggestions = repo<CallSuggestion>({
-      collection: "call_suggestions",
-      schema: CallSuggestion,
-      leadId: (c) => c.leadId,
-      status: (c) => c.status,
-    });
-    this.bookings = repo<BookingRecord>({
-      collection: "bookings",
-      schema: BookingRecord,
-      leadId: (b) => b.leadId,
-      status: (b) => b.outcome,
-    });
     this.failures = repo<FailureLog>({
       collection: "failure_logs",
       schema: FailureLog,
@@ -223,26 +135,10 @@ export class Store {
       status: (f) => f.category,
       skey: (f) => f.traceId,
     });
-    this.experiments = repo<Experiment>({
-      collection: "experiments",
-      schema: Experiment,
-      status: (e) => e.status,
-      skey: (e) => e.dimension,
-    });
-    this.experimentResults = repo<ExperimentResult>({
-      collection: "experiment_results",
-      schema: ExperimentResult,
-      skey: (r) => r.experimentId,
-    });
     this.dailyMemories = repo<DailyMemory>({
       collection: "daily_memories",
       schema: DailyMemory,
       skey: (m) => m.date,
-    });
-    this.weeklyReports = repo<WeeklyReport>({
-      collection: "weekly_reports",
-      schema: WeeklyReport,
-      skey: (r) => r.weekStart,
     });
     this.lessons = repo<DurableLesson>({
       collection: "durable_lessons",
