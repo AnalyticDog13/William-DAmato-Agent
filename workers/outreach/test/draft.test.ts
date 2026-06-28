@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nowIso, type Company, type Contact, type Lead, type WebsiteAudit } from "@william/core";
-import { DELIVERY_VARIANT, FIRST_TOUCH_VARIANTS, createFirstTouchDraft, validateDraft } from "../src";
+import { FIRST_TOUCH_VARIANTS, createFirstTouchDraft, validateDraft } from "../src";
 
 const now = nowIso();
 const base = { id: "x", createdAt: now, updatedAt: now };
@@ -58,12 +58,9 @@ describe("first-touch variant registry", () => {
     }
   });
 
-  it("validateDraft blocks a link in pre-reply copy but allows it in the delivery email", () => {
+  it("validateDraft blocks a link/URL unconditionally", () => {
     const base = createFirstTouchDraft(input());
     const withUrl = { ...base, body: `${base.body}\n\nSee it live at williamdamato.com` };
     expect(validateDraft(withUrl).some((p) => /link\/URL/i.test(p))).toBe(true);
-    // The delivery email is the one place a URL belongs — exempt by its variant.
-    const delivery = { ...withUrl, variant: DELIVERY_VARIANT };
-    expect(validateDraft(delivery).some((p) => /link\/URL/i.test(p))).toBe(false);
   });
 });
