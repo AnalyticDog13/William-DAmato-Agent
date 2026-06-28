@@ -52,7 +52,7 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
       ? `I noticed ${joinAngles(angles)}, which probably costs you a few customers`
       : `I think a few quick changes could help you get more customers from your site`;
 
-  const body = [
+  let body = [
     greeting,
     "",
     `I'm Will, a student at Cornell, and I came across ${company.name} while looking at ${place} sites. ${finding}. I actually put together a quick mockup of how it could look, and I'd be happy to send it over if you want a peek. Either way, no worries at all if now's not a good time.`,
@@ -62,6 +62,10 @@ export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
     "",
     OPT_OUT_LINE,
   ].join("\n");
+  // Sanitize: audit angles or company.name may contain emdashes/en-dashes/double-dashes.
+  // Replace them so validateDraft never rejects a legitimate draft due to source-data punctuation.
+  // The OPT_OUT_LINE has no dash characters, so it is preserved verbatim.
+  body = body.replace(/\s*(?:—|–|--)\s*/g, ", ");
 
   const now = nowIso();
   return {

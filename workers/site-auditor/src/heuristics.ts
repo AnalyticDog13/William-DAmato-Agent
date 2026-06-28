@@ -95,7 +95,7 @@ export function deriveFindings(signals: ExtractedSignals, loadMs: number | null)
   }
   if (signals.ctas.length === 0) {
     weaknesses.push({ category: "conversion", detail: "No clear call-to-action (book/order/contact).", severity: "high" });
-    angles.push("visitors have no obvious next step — no booking or contact button");
+    angles.push("visitors have no obvious next step, with no booking or contact button");
   }
   if (signals.trustSignals.length === 0) {
     weaknesses.push({ category: "trust", detail: "No reviews/testimonials/credentials visible.", severity: "medium" });

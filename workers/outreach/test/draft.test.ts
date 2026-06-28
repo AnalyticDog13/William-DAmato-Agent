@@ -77,6 +77,60 @@ describe("first-touch email content rules", () => {
   });
 });
 
+describe("emdash sanitization in createFirstTouchDraft", () => {
+  it("angle containing an emdash is sanitized from body and validates clean", () => {
+    const auditWithDash = {
+      ...audit,
+      outreachAngles: ["no obvious next step — no booking"],
+    };
+    const draft = createFirstTouchDraft({ ...fixture(), audit: auditWithDash });
+    expect(/[—–]|--/.test(draft.body)).toBe(false);
+    expect(validateDraft(draft)).toEqual([]);
+  });
+
+  it("company.name containing an emdash is sanitized from body and validates clean", () => {
+    const companyWithDash = { ...company, name: "Joe — Coffee" };
+    const draft = createFirstTouchDraft({ ...fixture(), company: companyWithDash });
+    expect(/[—–]|--/.test(draft.body)).toBe(false);
+    expect(validateDraft(draft)).toEqual([]);
+  });
+
+  it("validateDraft rejects an en-dash –", () => {
+    const draft = createFirstTouchDraft(fixture());
+    const bad = { ...draft, body: draft.body + "\nextra – dash" };
+    expect(validateDraft(bad)).toContain("contains an emdash");
+  });
+
+  it("validateDraft rejects a double-dash --", () => {
+    const draft = createFirstTouchDraft(fixture());
+    const bad = { ...draft, body: draft.body + "\nextra -- dash" };
+    expect(validateDraft(bad)).toContain("contains an emdash");
+  });
+
+  it("boundary: exactly 5 content sentences passes, 6 sentences fails", () => {
+    const base = createFirstTouchDraft(fixture());
+    const fiveSentBody = [
+      "Dear Sam,",
+      "",
+      "I'm Will, a student at Cornell. I noticed your website looks great. I made a mockup for you. I'd love to share it. Let me know if you're interested.",
+      "",
+      "Thanks,",
+      "Will",
+      "",
+      OPT_OUT_LINE,
+    ].join("\n");
+    const draft5 = { ...base, body: fiveSentBody };
+    expect(validateDraft(draft5).filter((p) => p.includes("sentence"))).toEqual([]);
+
+    const sixSentBody = fiveSentBody.replace(
+      "Let me know if you're interested.",
+      "Let me know if you're interested. One more sentence.",
+    );
+    const draft6 = { ...base, body: sixSentBody };
+    expect(validateDraft(draft6)).toContain("body too long (>5 sentences)");
+  });
+});
+
 describe("first-touch variant", () => {
   it("FIRST_TOUCH_VARIANT is the single variant id", () => {
     expect(FIRST_TOUCH_VARIANT).toBe("v1-cornell-mockup");
