@@ -30,7 +30,7 @@ import {
   screenForContactability,
   validateDraft,
 } from "@william/worker-outreach";
-import { requestApproval } from "./approvals";
+import { decideApproval, requestApproval } from "./approvals";
 import { credentialFor, evaluateGate, localReadCredential, operationalTicket, type AppContext } from "./context";
 import { IN_FLIGHT_STATUSES, countQualified, leadResolved } from "./sourcing";
 
@@ -433,6 +433,12 @@ const handleDraft: JobHandler = async (ctx, job) => {
   ctx.store.outreachDrafts.insert({ ...draft, status: "pending_approval", approvalRequestId: approval.id });
   setLeadStatus(ctx, lead, "draft_ready");
   ctx.store.writeActivity(lead.id, "draft_created", `Outreach draft awaiting owner approval in Review Queue`, { traceId: job.traceId });
+
+  if (ctx.config.pushMode === "auto") {
+    decideApproval(ctx, approval.id, "granted", "auto-push mode (PUSH_MODE=auto)");
+    ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: draft.id }, traceId: job.traceId, leadId: lead.id });
+    ctx.store.writeActivity(lead.id, "auto_push", `Auto-push: send enqueued (DNC re-screened at send).`, { traceId: job.traceId });
+  }
 };
 
 /** Enqueued by the API when the owner grants a SEND_FIRST_TOUCH approval. */

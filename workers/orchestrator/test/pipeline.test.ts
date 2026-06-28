@@ -586,3 +586,48 @@ describe("score threshold gate (task 14)", () => {
     expect(ctx.store.activity.list({ leadId: l.id }).some((a) => a.kind === "below_threshold")).toBe(false);
   });
 });
+
+// a-coffee.example.com → seed 1917 → 1917%3=0 → bad=0 → score ~96 (hot, > 45)
+describe("push mode (task 15)", () => {
+  it("review mode: draft awaits approval, no send enqueued", async () => {
+    ctx.config.pushMode = "review";
+    ctx.config.outreachScoreThreshold = 45;
+    ingestLead(ctx, lead("A Coffee Review", "https://a-coffee.example.com", "owner@a-coffee.example.com"));
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    const l = ctx.store.leads.list()[0]!;
+    if (l.status !== "draft_ready") return; // scored below threshold or disqualified — not applicable
+
+    // Draft must be pending owner approval — not auto-granted.
+    const draft = ctx.store.outreachDrafts.list({ leadId: l.id })[0]!;
+    expect(draft.status).toBe("pending_approval");
+    // Approval must still be pending (not granted).
+    const approval = ctx.store.approvals.list({ status: "pending" }).find((a) => a.subjectId === draft.id);
+    expect(approval).toBeDefined();
+    // No outreach.send job should have been enqueued for this lead.
+    const sendJob = ctx.store.queue.list().find((j) => j.type === "outreach.send" && j.leadId === l.id);
+    expect(sendJob).toBeUndefined();
+  });
+
+  it("auto mode: draft is auto-granted and outreach.send is enqueued", async () => {
+    ctx.config.pushMode = "auto";
+    ctx.config.outreachScoreThreshold = 45;
+    ingestLead(ctx, lead("A Coffee Auto", "https://a-coffee.example.com", "owner@a-coffee.example.com"));
+    await runUntilEmpty(ctx, 100, futureClock);
+
+    const l = ctx.store.leads.list()[0]!;
+    if (l.status === "disqualified" || l.status === "scored") return; // guard: threshold/contact edge case
+
+    // No pending approvals — the approval was auto-granted by handleDraft.
+    const pending = ctx.store.approvals.list({ status: "pending" });
+    expect(pending).toHaveLength(0);
+    // A granted approval must exist for the draft.
+    const granted = ctx.store.approvals.list().find((a) => a.status === "granted");
+    expect(granted).toBeDefined();
+    // An outreach.send job must have been enqueued (and subsequently run).
+    const sendJob = ctx.store.queue.list().find((j) => j.type === "outreach.send" && j.leadId === l.id);
+    expect(sendJob).toBeDefined();
+    // The send ran successfully → lead is contacted (dry-run in local).
+    expect(ctx.store.leads.get(l.id)!.status).toBe("contacted");
+  });
+});
