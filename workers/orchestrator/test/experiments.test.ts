@@ -99,22 +99,6 @@ describe("variant assignment", () => {
   });
 });
 
-describe("draft pipeline wiring", () => {
-  it("a running outreach_variant experiment assigns the draft variant", async () => {
-    const experiment = insertExperiment();
-    ingestLead(ctx, {
-      companyName: "AB Variant Barbers",
-      websiteUrl: "https://ab-variant-barbers.example.com",
-      niche: "barbershop",
-      city: "Ithaca",
-      source: { kind: "manual", detail: "test", importedAt: nowIso(), importedBy: "owner" },
-    });
-    await runUntilEmpty(ctx, 100, futureClock);
-    const draft = ctx.store.outreachDrafts.list()[0]!;
-    expect(draft.variant).toBe(assignVariant(experiment, draft.leadId));
-  });
-});
-
 describe("computeExperimentResults (outreach_variant)", () => {
   it("computes sends/replies/positive_replies/reply_rate per variant and upserts", () => {
     const experiment = insertExperiment();

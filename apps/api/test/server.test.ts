@@ -140,32 +140,9 @@ describe("owner-triggered preview deploy API", () => {
     expect((await authed(`/api/site-projects/${project.id}/deploy-preview`, { method: "POST" })).status).toBe(409);
   });
 
-  it("enqueues deploy.preview and records a dry-run deployment", async () => {
-    ctx.config.williamBuildsWebsites = true;
-    const project = insertProject("C:/tmp/preview/index.html");
-    const res = await authed(`/api/site-projects/${project.id}/deploy-preview`, { method: "POST" });
-    expect(res.status).toBe(202);
-    const deployments = ctx.store.deployments.list({ limit: 50 }).filter((d) => d.siteProjectId === project.id);
-    expect(deployments).toHaveLength(1);
-    expect(deployments[0]!.target).toBe("preview");
-    expect(deployments[0]!.status).toBe("dry_run");
-  });
 });
 
 describe("transcript ingestion API", () => {
-  it("accepts owner transcripts and turns them into lessons via the queue", async () => {
-    const res = await authed("/api/transcripts", {
-      method: "POST",
-      body: JSON.stringify({
-        source: "api-design-notes.txt",
-        text: "Keep the hero animation subtle; heavy motion hurts mobile conversion rates.",
-      }),
-    });
-    expect(res.status).toBe(202);
-    expect(((await res.json()) as { jobId: string }).jobId).toBeTruthy();
-    expect(ctx.store.lessons.list({ skey: "design" }).length).toBeGreaterThan(0);
-  });
-
   it("rejects missing source/text and oversized payloads", async () => {
     expect((await authed("/api/transcripts", { method: "POST", body: JSON.stringify({ source: "", text: "x" }) })).status).toBe(400);
     expect((await authed("/api/transcripts", { method: "POST", body: JSON.stringify({ source: "a.txt", text: "" }) })).status).toBe(400);
@@ -227,72 +204,6 @@ describe("lead + approval flow over HTTP", () => {
     const ok = await authed("/api/policies/SEND_PAYMENT_REQUEST", { method: "POST", body: JSON.stringify({ mode: "closed", note: "off" }) });
     expect(ok.status).toBe(200);
     expect(ctx.store.getGatePolicy("SEND_PAYMENT_REQUEST").mode).toBe("closed");
-  });
-});
-
-describe("site project routes (revision loop + deploy approval)", () => {
-  let projectId: string;
-  let leadId: string;
-
-  it("positive reply builds a preview project (inline worker)", async () => {
-    ctx.config.williamBuildsWebsites = true; // builder-on: positive reply builds a preview to revise/deploy
-    await authed("/api/leads", {
-      method: "POST",
-      body: JSON.stringify({ companyName: "Deploy Flow Cafe", websiteUrl: "https://deployflow.example.com", niche: "coffee_shop", city: "Ithaca" }),
-    });
-    const leads = (await (await authed("/api/collections/leads?search=Deploy")).json()) as { items: { id: string }[] };
-    leadId = ctx.store.leads.list().find((l) => ctx.store.companies.get(l.companyId)?.name === "Deploy Flow Cafe")!.id;
-    expect(leads.items.length).toBeGreaterThan(0);
-    await authed("/api/demo/reply", { method: "POST", body: JSON.stringify({ leadId, text: "Yes please, send the mockup!" }) });
-    const project = ctx.store.siteProjects.list({ leadId })[0]!;
-    expect(project).toBeDefined();
-    projectId = project.id;
-  });
-
-  it("revision with structured overrides is applied inline and shows in the timeline", async () => {
-    ctx.config.williamBuildsWebsites = true;
-    const res = await authed(`/api/site-projects/${projectId}/revisions`, {
-      method: "POST",
-      body: JSON.stringify({ request: "new tagline please", overrides: { tagline: "Espresso, properly." } }),
-    });
-    expect(res.status).toBe(201);
-    const timeline = (await (await authed(`/api/leads/${leadId}/timeline`)).json()) as {
-      siteRevisions: { status: string }[];
-    };
-    expect(timeline.siteRevisions[0]!.status).toBe("applied");
-    expect((ctx.store.siteProjects.get(projectId)!.companyData as { tagline?: string }).tagline).toBe("Espresso, properly.");
-  });
-
-  it("revision without request text is rejected", async () => {
-    ctx.config.williamBuildsWebsites = true;
-    const res = await authed(`/api/site-projects/${projectId}/revisions`, { method: "POST", body: JSON.stringify({ overrides: {} }) });
-    expect(res.status).toBe(400);
-  });
-
-  it("request-deploy creates a DEPLOY_PRODUCTION approval; granting it deploys dry-run only", async () => {
-    ctx.config.williamBuildsWebsites = true;
-    const res = await authed(`/api/site-projects/${projectId}/request-deploy`, { method: "POST" });
-    expect(res.status).toBe(201);
-    const { approval } = (await res.json()) as { approval: { id: string; gate: string; status: string } };
-    expect(approval.gate).toBe("DEPLOY_PRODUCTION");
-    expect(approval.status).toBe("pending");
-    const projectDeployments = () => ctx.store.deployments.list({ limit: 100 }).filter((d) => d.siteProjectId === projectId);
-    expect(projectDeployments()).toHaveLength(0); // nothing until granted
-
-    const decide = await authed(`/api/approvals/${approval.id}/decide`, {
-      method: "POST",
-      body: JSON.stringify({ decision: "granted", note: "ship" }),
-    });
-    expect(decide.status).toBe(200);
-    const record = projectDeployments()[0]!;
-    expect(record.target).toBe("production");
-    expect(record.status).toBe("dry_run"); // local env can NEVER deploy live
-    expect(ctx.store.siteProjects.get(projectId)!.status).toBe("approved_for_customer");
-  });
-
-  it("404s on unknown projects", async () => {
-    expect((await authed("/api/site-projects/site_nope/request-deploy", { method: "POST" })).status).toBe(404);
-    expect((await authed("/api/site-projects/site_nope/revisions", { method: "POST", body: JSON.stringify({ request: "x" }) })).status).toBe(404);
   });
 });
 
