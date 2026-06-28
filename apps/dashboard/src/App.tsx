@@ -6,8 +6,6 @@ import { ReviewQueue } from "./pages/ReviewQueue";
 import { LeadsPage } from "./pages/LeadsPage";
 import { LeadDetail } from "./pages/LeadDetail";
 import { Policies } from "./pages/Policies";
-import { Experiments } from "./pages/Experiments";
-import { WebsiteBriefs } from "./pages/WebsiteBriefs";
 import { SourcingPage } from "./pages/SourcingPage";
 import { CollectionPage, type Section } from "./pages/CollectionPage";
 
@@ -30,27 +28,6 @@ const NAV: NavEntry[] = [
     { title: "Drafts", collection: "outreach-drafts", columns: ["leadId", "status", "subject", "variant"] },
     { title: "Campaign Syncs", collection: "campaign-syncs", columns: ["leadId", "status", "detail"] },
   ] },
-  { path: "/replies", label: "Replies", sections: [{ title: "Reply Events", collection: "replies", columns: ["leadId", "intent", "intentConfidence", "bodyExcerpt", "recommendedNextStep"] }] },
-  { path: "/opportunities", label: "Opportunities / Deals", sections: [{ title: "Opportunities", collection: "opportunities", columns: ["leadId", "stage", "valueUsd", "recommendedNextStep"] }] },
-  { path: "/website-briefs", label: "Website Briefs", group: "Pipeline" },
-  { path: "/site-projects", label: "Site Projects", builderGated: true, sections: [
-    { title: "Projects", collection: "site-projects", columns: ["leadId", "status", "templateId", "previewPath", "missingInputs"] },
-    { title: "Revisions", collection: "site-revisions", columns: ["siteProjectId", "status", "request"] },
-  ] },
-  { path: "/deployments", label: "Deployments", sections: [{ title: "Deployments", collection: "deployments", columns: ["siteProjectId", "websiteBriefId", "target", "status", "url"] }] },
-  { path: "/billing", label: "Billing", sections: [
-    { title: "Invoice Drafts", collection: "invoice-drafts", columns: ["leadId", "kind", "status", "amountUsd", "url"] },
-    { title: "Payments", collection: "payments", columns: ["leadId", "status", "amountUsd", "paidAt"] },
-  ] },
-  { path: "/calls", label: "Calendar / Calls", sections: [
-    { title: "Call Suggestions (owner schedules via will@williamdamato.com)", collection: "call-suggestions", columns: ["leadId", "status", "reason", "suggestedSlots"] },
-    { title: "Bookings", collection: "bookings", columns: ["leadId", "scheduledFor", "outcome"] },
-  ] },
-  { path: "/memory", label: "Memory / Lessons", group: "Intelligence", sections: [
-    { title: "Daily Memory", collection: "daily-memories", columns: ["date", "summary"] },
-    { title: "Durable Lessons", collection: "lessons", columns: ["topic", "lesson", "confidence", "timesConfirmed"] },
-  ] },
-  { path: "/experiments", label: "Experiments" },
   { path: "/failures", label: "Failures / Logs", sections: [
     { title: "Failures", collection: "failures", columns: ["category", "message", "leadId", "retryable"] },
     { title: "Audit Log (every sensitive action)", collection: "audit-log", columns: ["actor", "action", "outcome", "detail"] },
@@ -137,8 +114,6 @@ export function App() {
           <Route path="/leads" element={<LeadsPage />} />
           <Route path="/leads/:id" element={<LeadDetail />} />
           <Route path="/policies" element={<Policies />} />
-          <Route path="/experiments" element={<Experiments />} />
-          <Route path="/website-briefs" element={<WebsiteBriefs />} />
           <Route path="/sourcing" element={<SourcingPage />} />
           {NAV.filter((n) => n.sections).map((n) => (
             <Route key={n.path} path={n.path} element={<CollectionPage title={n.label} sections={n.sections!} builderGated={n.builderGated} />} />
