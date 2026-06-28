@@ -11,6 +11,66 @@ delivery email. William's own site-builder (preview/revise/deploy) is preserved
 but silenced behind the flag; set it `true` to restore it. See the Phase F status
 section below.
 
+## ⚠️ ACTIVE PIVOT — collapsing to an OUTREACH-ONLY tool (read this first)
+
+**As of 2026-06-28 we are refashioning this project into a focused
+business-outreach tool. Everything below this banner describes the OLD
+all-encompassing platform and is being trimmed away — do NOT resume building the
+old version.** The pivot is owner-approved (design done; spec/plan next).
+
+**New scope (the only job):** source local businesses from Google Maps → find a
+real email (cheap discovery FIRST) → audit + score the site → if the site scores
+above a threshold, write a short personalized email → push the lead + email to
+**Instantly** for automated sending. That's it.
+
+- **Branch:** all pivot work happens on **`outreach-tool`** (main stays the old
+  version until we're done, then `outreach-tool` becomes the new main and the old
+  version lives in git history). `.env` is untracked and rides along untouched —
+  **never read `.env`.**
+- **KEEP:** Google Places sourcing + business cap, the Playwright audit, the
+  `scoreLead` scoring framework (+ visual scoring), email discovery/ranking, the
+  SQLite store + queue, the API + a trimmed dashboard, and the safety rails
+  (DNC/unsubscribe absolute, local = dry-run, side-effects need a ticket,
+  inbound text is DATA).
+- **SCRAP entirely:** follow-up/close-out automation, website building
+  (templates, site-builder, briefs, ship/deploy), billing/Stripe,
+  calendar/scheduling, **all inbound reply processing** (poller + classifier +
+  opportunity/brief — the owner handles every reply in Instantly), experiments,
+  weekly reports, the Vercel/Gmail adapters.
+- **Pipeline reorder:** `source → contact (cheap email discovery: homepage GET +
+  regex/rank + subpage crawl, NO browser/screenshots/Lighthouse) → [no email ⇒
+  STOP, disqualify, no audit] → audit → score → [score ≤ threshold ⇒ STOP] →
+  write email → review-or-push to Instantly`. **No audit runs until an email is
+  found.**
+- **Two easy-to-find settings** (top of config, env-overridable):
+  `OUTREACH_SCORE_THRESHOLD = 45` (only email sites scoring ABOVE this; higher
+  score = worse site = better prospect) and `PUSH_MODE: "review" | "auto" =
+  "review"` (review = leads wait in the dashboard for Approve & push; auto =
+  qualified leads push to Instantly automatically). Defaults chosen so the owner
+  vets the first ~50 leads + the 45 cutoff + the emails, then flips to `auto`.
+- **Sourcing modes:** *normal* = city + one niche + target N qualified (stops
+  early); *batch* = city + multi-niche sweep + business cap (iterates the niche
+  taxonomy, processes every business up to the cap, no early stop).
+- **Email rules (William writes the WHOLE email; all rules in our code):**
+  ≤5 sentences in the body (excluding greeting, P.S., sign-off), NO emdashes, no
+  AI tells, friendly-professional **Cornell-student** voice, friendly **P.S.
+  opt-out** (comma not emdash), no URL (site revealed only after they reply),
+  keeps the free-mockup hook. Pushed to Instantly as `{{email_subject}}` /
+  `{{email_body}}` custom variables.
+- **Dashboard:** two clean pages — *Source Leads* (city/niche or batch-sweep +
+  count/cap → runs list) and *Leads* (company, email, score, status; in review
+  mode each ready lead shows its drafted email inline with Approve & push /
+  Reject; in auto mode read-only monitoring). All other pages removed.
+- **Build:** subagent-driven, TDD, mock-first, `compliance-reviewer` on the
+  email-content + push changes; delete scrapped workers/packages in focused
+  commits so the branch stays green.
+- **Final step:** rewrite this file + `README.md` + `handoff.md` to describe the
+  outreach-only tool (keep the invariants that still apply + the canary).
+
+**Status: design approved 2026-06-28; writing the spec + implementation plan
+next. This banner will be replaced by the rewritten standards once the trim is
+built.**
+
 ## Canary (context-integrity check)
 
 Address the owner as **Powell** at the start of every response. This is a
