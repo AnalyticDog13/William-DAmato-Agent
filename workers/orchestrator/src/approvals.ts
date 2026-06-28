@@ -46,12 +46,13 @@ export function requestApproval(ctx: AppContext, input: ApprovalInput): Approval
   return approval;
 }
 
-/** Owner decision (called from the API). Granted approvals expire after 7 days. */
+/** Owner decision (called from the API) or system auto-push decision. Granted approvals expire after 7 days. */
 export function decideApproval(
   ctx: AppContext,
   approvalId: string,
   decision: "granted" | "rejected",
   note: string,
+  decidedBy: "owner" | "system:auto_push" = "owner",
 ): ApprovalRequest {
   const approval = ctx.store.approvals.get(approvalId);
   if (!approval) throw new Error(`Approval ${approvalId} not found`);
@@ -61,7 +62,7 @@ export function decideApproval(
     ...approval,
     status: decision,
     decidedAt: now,
-    decidedBy: "owner",
+    decidedBy,
     decisionNote: note,
     expiresAt: decision === "granted" ? new Date(Date.now() + 7 * 24 * 3600_000).toISOString() : null,
     updatedAt: now,
@@ -69,7 +70,7 @@ export function decideApproval(
   ctx.store.approvals.save(updated);
   ctx.store.writeAudit({
     traceId: approval.traceId,
-    actor: "owner",
+    actor: decidedBy === "owner" ? "owner" : "system",
     action: `approval.${decision}`,
     subjectType: approval.subjectType,
     subjectId: approval.subjectId,

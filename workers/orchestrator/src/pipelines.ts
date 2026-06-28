@@ -435,7 +435,7 @@ const handleDraft: JobHandler = async (ctx, job) => {
   ctx.store.writeActivity(lead.id, "draft_created", `Outreach draft awaiting owner approval in Review Queue`, { traceId: job.traceId });
 
   if (ctx.config.pushMode === "auto") {
-    decideApproval(ctx, approval.id, "granted", "auto-push mode (PUSH_MODE=auto)");
+    decideApproval(ctx, approval.id, "granted", "auto-push mode (PUSH_MODE=auto)", "system:auto_push");
     ctx.store.queue.enqueue({ type: "outreach.send", payload: { draftId: draft.id }, traceId: job.traceId, leadId: lead.id });
     ctx.store.writeActivity(lead.id, "auto_push", `Auto-push: send enqueued (DNC re-screened at send).`, { traceId: job.traceId });
   }

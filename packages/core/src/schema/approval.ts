@@ -24,7 +24,7 @@ export const ApprovalRequest = BaseEntity.extend({
   requestedBy: z.literal("system"),
   status: z.enum(["pending", "granted", "rejected", "expired", "revoked"]),
   decidedAt: IsoDate.nullable().default(null),
-  decidedBy: z.enum(["owner"]).nullable().default(null),
+  decidedBy: z.enum(["owner", "system:auto_push"]).nullable().default(null),
   decisionNote: z.string().default(""),
   expiresAt: IsoDate.nullable().default(null),
   traceId: z.string(),

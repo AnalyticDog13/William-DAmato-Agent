@@ -624,6 +624,8 @@ describe("push mode (task 15)", () => {
     // A granted approval must exist for the draft.
     const granted = ctx.store.approvals.list().find((a) => a.status === "granted");
     expect(granted).toBeDefined();
+    // The grant must be attributed to the system (auto-push), not the owner.
+    expect(granted!.decidedBy).toBe("system:auto_push");
     // An outreach.send job must have been enqueued (and subsequently run).
     const sendJob = ctx.store.queue.list().find((j) => j.type === "outreach.send" && j.leadId === l.id);
     expect(sendJob).toBeDefined();
