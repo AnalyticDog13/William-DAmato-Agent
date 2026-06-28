@@ -23,7 +23,7 @@ import {
   type WebsiteAudit,
 } from "@william/core";
 import { readFileSync } from "node:fs";
-import { auditWebsite, crawlForEmail, launchChromium, lighthouseSlowAngle, runDeferredLighthouse } from "@william/worker-site-auditor";
+import { auditWebsite, crawlForEmail, fetchHomepageEmails, launchChromium, lighthouseSlowAngle, runDeferredLighthouse } from "@william/worker-site-auditor";
 import {
   OPT_OUT_LINE,
   createFirstTouchDraft,
@@ -129,7 +129,7 @@ export function ingestLead(ctx: AppContext, input: LeadInput): IntakeResult {
     });
   }
 
-  ctx.store.queue.enqueue({ type: "lead.audit", payload: { leadId: lead.id }, traceId, leadId: lead.id });
+  ctx.store.queue.enqueue({ type: "lead.contact", payload: { leadId: lead.id }, traceId, leadId: lead.id });
   return { outcome: "created", lead };
 }
 
@@ -174,7 +174,7 @@ const handleAudit: JobHandler = async (ctx, job) => {
   }
   setLeadStatus(ctx, lead, "audited");
   ctx.store.writeActivity(lead.id, "audit_completed", audit.summary, { traceId: job.traceId, data: { auditId: audit.id, auditScore: audit.auditScore } });
-  ctx.store.queue.enqueue({ type: "lead.contact", payload: { leadId: lead.id, auditId: audit.id }, traceId: job.traceId, leadId: lead.id });
+  ctx.store.queue.enqueue({ type: "lead.score", payload: { leadId: lead.id, auditId: audit.id }, traceId: job.traceId, leadId: lead.id });
 };
 
 const handleScore: JobHandler = async (ctx, job) => {
@@ -270,14 +270,20 @@ const handleScore: JobHandler = async (ctx, job) => {
 
 const handleContact: JobHandler = async (ctx, job) => {
   const lead = getLead(ctx, job);
-  const audit = ctx.store.audits.get(job.payload.auditId as string);
   const existing = ctx.store.contacts.list({ leadId: lead.id })[0];
   let contact: Contact | undefined = existing;
 
   if (!contact) {
-    const auditEmails = audit?.extracted.contactEmails ?? [];
     const emailCtx = { siteUrl: lead.websiteUrl, companyName: ctx.store.companies.get(lead.companyId)?.name ?? null };
-    let resolvedEmail = bestBusinessEmail(auditEmails, emailCtx);  // 1) homepage pass (ranked)
+
+    // 1) Cheap homepage pass — plain HTTP GET, no browser. Dry-run safe (returns []
+    //    in local). Runs BEFORE the Playwright crawl to avoid spinning up Chromium
+    //    for leads whose contact email is already visible in the homepage source.
+    const homepageTicket = operationalTicket(ctx, "homepage.fetch", { type: "Lead", id: lead.id, leadId: lead.id }, job.traceId, localReadCredential(ctx));
+    const auditEmails = lead.websiteUrl
+      ? await fetchHomepageEmails(lead.websiteUrl, { ticket: { dryRun: homepageTicket.dryRun }, companyName: emailCtx.companyName })
+      : [];
+    let resolvedEmail = bestBusinessEmail(auditEmails, emailCtx);
     let source: "website_published" | "website_crawled" | "enrichment" = "website_published";
     let foundOn: string | null = null;
 
@@ -314,6 +320,8 @@ const handleContact: JobHandler = async (ctx, job) => {
     // 3) An email resolved from the website (homepage pass or crawl) becomes the
     //    contact. We never GUESS an address (no info@<domain> fabrication): a lead
     //    with no real email found on its site is simply not contactable.
+    //    phone is intentionally null here — phones come from the audit, which runs
+    //    AFTER contact in the new order; they are re-derivable at audit time.
     if (resolvedEmail) {
       const now = nowIso();
       contact = ctx.store.contacts.insert({
@@ -329,7 +337,7 @@ const handleContact: JobHandler = async (ctx, job) => {
         emailProvider: null,
         verification: "unverified",
         confidence: source === "website_published" ? 0.7 : 0.6,
-        phone: audit?.extracted.phones[0] ?? null,
+        phone: null,
       });
       if (foundOn) ctx.store.writeActivity(lead.id, "contact_found", `Email ${resolvedEmail} found by crawl on ${foundOn}`, { traceId: job.traceId });
     } else if (lead.domain && credentialFor(ctx, "enrichment")) {
@@ -376,7 +384,7 @@ const handleContact: JobHandler = async (ctx, job) => {
     return;
   }
 
-  // 4) Verify before outreach.
+  // Verify before outreach.
   const ticket = operationalTicket(ctx, "enrichment.verifyEmail", { type: "Contact", id: contact.id, leadId: lead.id }, job.traceId, credentialFor(ctx, "email_verify"));
   const verdict = await ctx.integrations.enrichment.verifyEmail(ticket, contact.email);
   contact = ctx.store.contacts.save({
@@ -389,7 +397,8 @@ const handleContact: JobHandler = async (ctx, job) => {
   }
   setLeadStatus(ctx, lead, "contact_ready");
   ctx.store.writeActivity(lead.id, "contact_found", `Contact ${contact.email} (${contact.emailSource}, ${contact.verification})`, { traceId: job.traceId });
-  ctx.store.queue.enqueue({ type: "lead.score", payload: { leadId: lead.id, auditId: job.payload.auditId }, traceId: job.traceId, leadId: lead.id });
+  // Enqueue the audit AFTER contact is resolved — no audit runs for uncontactable leads.
+  ctx.store.queue.enqueue({ type: "lead.audit", payload: { leadId: lead.id }, traceId: job.traceId, leadId: lead.id });
 };
 
 const handleDraft: JobHandler = async (ctx, job) => {

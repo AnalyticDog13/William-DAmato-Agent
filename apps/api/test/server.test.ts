@@ -70,7 +70,7 @@ describe("lead + approval flow over HTTP", () => {
   it("creates a lead, runs the inline pipeline, exposes the review queue", async () => {
     const res = await authed("/api/leads", {
       method: "POST",
-      body: JSON.stringify({ companyName: "API Test Barbers", websiteUrl: "https://apitest.example.com", niche: "barbershop", city: "Ithaca" }),
+      body: JSON.stringify({ companyName: "API Test Barbers", websiteUrl: "https://apitest.example.com", niche: "barbershop", city: "Ithaca", email: "owner@apitest.example.com" }),
     });
     expect(res.status).toBe(201);
     const queue = (await (await authed("/api/review-queue")).json()) as { items: { id: string; gate: string }[] };
@@ -97,7 +97,7 @@ describe("lead + approval flow over HTTP", () => {
   it("rejecting a SEND_FIRST_TOUCH email draft sets the draft status to rejected", async () => {
     await authed("/api/leads", {
       method: "POST",
-      body: JSON.stringify({ companyName: "Reject Flow Co", websiteUrl: "https://rejectflow.example.com", niche: "barbershop", city: "Ithaca" }),
+      body: JSON.stringify({ companyName: "Reject Flow Co", websiteUrl: "https://rejectflow.example.com", niche: "barbershop", city: "Ithaca", email: "owner@rejectflow.example.com" }),
     });
     const leadId = ctx.store.leads.list().find((l) => ctx.store.companies.get(l.companyId)?.name === "Reject Flow Co")!.id;
     const draft = ctx.store.outreachDrafts.list({ leadId })[0]!;

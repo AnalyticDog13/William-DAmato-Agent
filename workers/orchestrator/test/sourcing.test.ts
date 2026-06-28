@@ -159,6 +159,27 @@ function approvedRun(
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
+/**
+ * Configure a sandbox enrichment credential so `credentialFor(ctx,"enrichment")`
+ * returns non-null, enabling the enrichment rung in handleContact.
+ * Required for sourcing tests that need leads to reach outreach.draft: since the
+ * reorder puts contact BEFORE audit, and fetchHomepageEmails is dry-run-safe
+ * (returns [] in local), sourcing-ingested leads (no owner-provided email) need
+ * enrichment to get a contactable address.
+ */
+function configureEnrichment(ctx: AppContext, mode: "sandbox" | "live") {
+  const existing = ctx.store.credentialStatuses.findByKey("integration:enrichment")[0];
+  const now = nowIso();
+  if (existing) {
+    ctx.store.credentialStatuses.save({ ...existing, mode, updatedAt: now });
+    return;
+  }
+  ctx.store.credentialStatuses.insert({
+    id: newId("cred"), createdAt: now, updatedAt: now,
+    integration: "enrichment" as "anthropic", mode, healthy: true, lastCheckedAt: now, detail: "test",
+  });
+}
+
 describe("lead.source controller", () => {
   let ctx: AppContext;
 
@@ -167,10 +188,14 @@ describe("lead.source controller", () => {
   });
 
   it("sources, ingests, and stops when target is met or Places exhausted", async () => {
-    // Two businesses — both will be ingested. The mock audit synthesises
-    // info@<subdomain>.example.com for domains where bad < 2, which passes
-    // the placeholder check (the domain is not in PLACEHOLDER_DOMAINS), so
-    // the pipeline reaches outreach.draft and the lead qualifies.
+    // Two businesses — both ingested. The new pipeline order is contact→audit→score→draft.
+    // fetchHomepageEmails returns [] in dry-run (local), so we configure enrichment to
+    // supply a contactable email. a-coffee has mock bad=0 (score > 35) → qualifies;
+    // b-coffee has bad=1 (score ≤ 35) → doesn't qualify. target=1, so the run completes.
+    configureEnrichment(ctx, "sandbox");
+    ctx.integrations.enrichment.findContacts = async (_t, domain) => [
+      { email: `info@${domain}`, name: null, role: null, confidence: 0.8, provider: "stub" },
+    ];
     ctx.integrations.places.searchBusinesses = async () => ({
       businesses: [
         {
@@ -321,13 +346,21 @@ describe("lead.source controller", () => {
     // next page, and the run reaches `completed` with qualifiedCount >= target.
     // Domain selection: the mock auditor synthesizes behaviour deterministically
     // from seed = sum(charCodes(domain)) % 3:
-    //   bad=0  → rough site  → high lead score (well above 35) + email published
-    //   bad=1  → mediocre    → low lead score (~31, BELOW 35) + email published
-    //   bad=2  → decent site → NO email → disqualified before scoring
+    //   bad=0  → rough site  → high lead score (well above 35)
+    //   bad=1  → mediocre    → low lead score (~31, BELOW 35)
+    //   bad=2  → decent site → low opportunity score
     //
     // Both domains must have bad=0 so they qualify for countQualified (score>35).
-    //   bb-coffee.example.com → seed=2022 → 2022%3=0 → bad=0 → email+high score
-    //   ee-coffee.example.com → seed=2031 → 2031%3=0 → bad=0 → email+high score
+    //   bb-coffee.example.com → seed=2016 → 2016%3=0 → bad=0 → high score
+    //   ee-coffee.example.com → seed=2022 → 2022%3=0 → bad=0 → high score
+    //
+    // Since fetchHomepageEmails returns [] in dry-run (local), enrichment is
+    // configured to supply a contactable email so leads proceed through the
+    // new contact→audit→score→draft pipeline order.
+    configureEnrichment(ctx, "sandbox");
+    ctx.integrations.enrichment.findContacts = async (_t, domain) => [
+      { email: `info@${domain}`, name: null, role: null, confidence: 0.8, provider: "stub" },
+    ];
     let callCount = 0;
     ctx.integrations.places.searchBusinesses = async (_t, input) => {
       callCount += 1;

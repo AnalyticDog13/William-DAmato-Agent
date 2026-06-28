@@ -20,17 +20,18 @@ beforeEach(() => {
   ctx = createContext({ inMemory: true, silent: true });
 });
 
-const lead = (name: string, url: string | null = "https://test-biz.example.com") => ({
+const lead = (name: string, url: string | null = "https://test-biz.example.com", email?: string) => ({
   companyName: name,
   websiteUrl: url,
   niche: "barbershop" as const,
   city: "Ithaca",
+  ...(email ? { email } : {}),
   source: { kind: "manual" as const, detail: "test", importedAt: nowIso(), importedBy: "owner" as const },
 });
 
 describe("send idempotency (reclaim safety)", () => {
   it("a re-run of an already-sent draft is a no-op (never double-pushes)", async () => {
-    ingestLead(ctx, lead("Idem Biz", "https://idem-biz.example.com"));
+    ingestLead(ctx, lead("Idem Biz", "https://idem-biz.example.com", "owner@idem-biz.example.com"));
     await runUntilEmpty(ctx, 100, futureClock);
     const approval = ctx.store.approvals.list({ status: "pending" })[0]!;
     decideApproval(ctx, approval.id, "granted", "test");
@@ -48,7 +49,7 @@ describe("send idempotency (reclaim safety)", () => {
 
 describe("send failure handling", () => {
   it("a failed Instantly push does NOT mark the lead contacted — the job fails and retries", async () => {
-    ingestLead(ctx, lead("Fail Biz", "https://fail-biz.example.com"));
+    ingestLead(ctx, lead("Fail Biz", "https://fail-biz.example.com", "owner@fail-biz.example.com"));
     await runUntilEmpty(ctx, 100, futureClock);
     const approval = ctx.store.approvals.list({ status: "pending" })[0]!;
     decideApproval(ctx, approval.id, "granted", "test");
@@ -125,46 +126,100 @@ describe("lead pipeline (dry run, mocks)", () => {
   });
 });
 
-describe("pipeline reorder + email-ladder gate (task 8)", () => {
-  it("audit enqueues lead.contact (not lead.score)", async () => {
-    ingestLead(ctx, lead("Reorder Barbers"));
-    // Run only the audit job — stop before contact/score so we can inspect the queue.
-    const auditJob = ctx.store.queue.list().find((j) => j.type === "lead.audit");
-    expect(auditJob).toBeDefined();
-    const { JOB_HANDLERS } = await import("../src/pipelines");
-    await JOB_HANDLERS["lead.audit"]!(ctx, auditJob!);
-    expect(ctx.store.queue.list().some((j) => j.type === "lead.contact")).toBe(true);
-    expect(ctx.store.queue.list().some((j) => j.type === "lead.score")).toBe(false);
+describe("pipeline reorder: contact before audit (task 13)", () => {
+  it("intake enqueues lead.contact first (not lead.audit)", () => {
+    const result = ingestLead(ctx, lead("Reorder Barbers", "https://reorder-barbers.example.com", "owner@reorder-barbers.example.com"));
+    if (result.outcome !== "created") throw new Error("expected created");
+    const l = result.lead;
+    // Intake must enqueue lead.contact, NOT lead.audit.
+    expect(ctx.store.queue.list().some((j) => j.type === "lead.contact" && j.payload.leadId === l.id)).toBe(true);
+    expect(ctx.store.queue.list().some((j) => j.type === "lead.audit" && j.payload.leadId === l.id)).toBe(false);
   });
 
-  it("no-email lead is disqualified with the record kept and never reaches scoring", async () => {
-    // A website-less lead has NO email at every ladder rung: the mock audit
-    // extracts no contactEmails (step 1), the crawl is skipped (null websiteUrl,
-    // step 2), and enrichment is skipped (null domain, step 3) — so the ladder
-    // deterministically exhausts and the email gate must fire.
-    ingestLead(ctx, lead("No Email Barbers", null));
-    await runUntilEmpty(ctx, 100, futureClock); // intake → audit → contact (hits the gate)
-    const l = ctx.store.leads.list()[0]!;
+  it("contact with no email disqualifies and never enqueues a lead.audit job", async () => {
+    // A website-less lead has NO email at every rung: fetchHomepageEmails (null URL → []),
+    // crawl (null URL → skipped), enrichment (null domain → skipped) — email gate fires.
+    const result = ingestLead(ctx, lead("No Email Barbers", null));
+    if (result.outcome !== "created") throw new Error("expected created");
+    const l = result.lead;
+
+    const { JOB_HANDLERS } = await import("../src/pipelines");
+    const contactJob = ctx.store.queue.list().find((j) => j.type === "lead.contact" && j.leadId === l.id)!;
+    await JOB_HANDLERS["lead.contact"]!(ctx, contactJob);
 
     const lead_ = ctx.store.leads.get(l.id)!;
     expect(lead_.status).toBe("disqualified");
     expect(lead_.disqualifiedReason).toMatch(/no contactable email/i);
     expect(ctx.store.leads.get(l.id)).toBeDefined(); // record kept
-    // The lead never reaches scoring — no lead.score job was ever enqueued.
+    // No lead.audit was ever enqueued for this lead.
+    expect(ctx.store.queue.list().some((j) => j.type === "lead.audit" && j.payload.leadId === l.id)).toBe(false);
+    // No lead.score was ever enqueued either.
     expect(ctx.store.queue.list().some((j) => j.type === "lead.score" && j.leadId === l.id)).toBe(false);
   });
 
-  it("contactable lead: contact runs before score, score finds the contact and enqueues outreach.draft", async () => {
-    ingestLead(ctx, lead("Full Pipeline Barbers", "https://full-pipeline.example.com"));
+  it("contact that finds an email enqueues lead.audit (not lead.score)", async () => {
+    // Owner-provided email means handleContact finds an existing contact, skips
+    // discovery, verifies, sets contact_ready, and enqueues lead.audit.
+    const result = ingestLead(ctx, lead("Email Found Barbers", "https://email-found.example.com", "owner@email-found.example.com"));
+    if (result.outcome !== "created") throw new Error("expected created");
+    const l = result.lead;
+
+    const { JOB_HANDLERS } = await import("../src/pipelines");
+    const contactJob = ctx.store.queue.list().find((j) => j.type === "lead.contact" && j.leadId === l.id)!;
+    const auditsBefore = ctx.store.queue.list().filter((j) => j.type === "lead.audit" && j.payload.leadId === l.id).length;
+    await JOB_HANDLERS["lead.contact"]!(ctx, contactJob);
+
+    // A lead.audit job must have been enqueued (one MORE than before the handler ran).
+    const auditsAfter = ctx.store.queue.list().filter((j) => j.type === "lead.audit" && j.payload.leadId === l.id);
+    expect(auditsAfter.length).toBe(auditsBefore + 1);
+    // No lead.score yet — score comes AFTER the audit, which hasn't run yet.
+    expect(ctx.store.queue.list().some((j) => j.type === "lead.score" && j.payload.leadId === l.id)).toBe(false);
+  });
+
+  it("audit enqueues lead.score (not lead.contact)", async () => {
+    // Run contact handler first (email found via owner-provided contact).
+    const result = ingestLead(ctx, lead("Score Barbers", "https://score-barbers.example.com", "owner@score-barbers.example.com"));
+    if (result.outcome !== "created") throw new Error("expected created");
+    const l = result.lead;
+    const { JOB_HANDLERS } = await import("../src/pipelines");
+    const contactJob = ctx.store.queue.list().find((j) => j.type === "lead.contact" && j.leadId === l.id)!;
+    await JOB_HANDLERS["lead.contact"]!(ctx, contactJob);
+
+    // Now an audit job is enqueued. Run ONLY the audit handler.
+    const auditJob = ctx.store.queue.list().find((j) => j.type === "lead.audit" && j.payload.leadId === l.id)!;
+    expect(auditJob).toBeDefined();
+    const contactJobsBefore = ctx.store.queue.list().filter((j) => j.type === "lead.contact" && j.leadId === l.id).length;
+    await JOB_HANDLERS["lead.audit"]!(ctx, auditJob);
+
+    // Audit must enqueue lead.score.
+    expect(ctx.store.queue.list().some((j) => j.type === "lead.score" && j.payload.leadId === l.id)).toBe(true);
+    // Audit must NOT enqueue any NEW lead.contact job (count unchanged).
+    const contactJobsAfter = ctx.store.queue.list().filter((j) => j.type === "lead.contact" && j.leadId === l.id).length;
+    expect(contactJobsAfter).toBe(contactJobsBefore);
+  });
+
+  it("no-email lead is disqualified via full pipeline — record kept, never reaches scoring", async () => {
+    // Full runUntilEmpty path: intake → contact (hits the email gate, disqualifies).
+    ingestLead(ctx, lead("No Email Full Barbers", null));
     await runUntilEmpty(ctx, 100, futureClock);
     const l = ctx.store.leads.list()[0]!;
-    if (l.status === "draft_ready" || l.status === "contact_ready" || l.status === "scored") {
-      // Contact must have been created before scoring ran.
-      const contact = ctx.store.contacts.list({ leadId: l.id })[0];
-      expect(contact).toBeDefined();
-      // Score should exist (handleScore ran).
-      const score = ctx.store.leadScores.list({ leadId: l.id })[0];
-      expect(score).toBeDefined();
+    expect(ctx.store.leads.get(l.id)!.status).toBe("disqualified");
+    expect(ctx.store.leads.get(l.id)!.disqualifiedReason).toMatch(/no contactable email/i);
+    expect(ctx.store.leads.get(l.id)).toBeDefined(); // record kept
+    // No lead.score job was ever enqueued.
+    expect(ctx.store.queue.list().some((j) => j.type === "lead.score" && j.leadId === l.id)).toBe(false);
+  });
+
+  it("contactable lead: contact runs before audit and score, score finds the contact and enqueues outreach.draft", async () => {
+    // Owner-provided email flows through: contact → audit → score → draft.
+    ingestLead(ctx, lead("Full Pipeline Barbers", "https://full-pipeline.example.com", "owner@full-pipeline.example.com"));
+    await runUntilEmpty(ctx, 100, futureClock);
+    const l = ctx.store.leads.list()[0]!;
+    if (l.status === "draft_ready" || l.status === "scored") {
+      // Contact must have been created before scoring ran (and before audit).
+      expect(ctx.store.contacts.list({ leadId: l.id })[0]).toBeDefined();
+      // Score should exist (handleScore ran after the audit).
+      expect(ctx.store.leadScores.list({ leadId: l.id })[0]).toBeDefined();
     }
     // The overall pipeline still stops at approval (same as before).
     expect(["draft_ready", "disqualified"]).toContain(l.status);
@@ -188,8 +243,11 @@ describe("visual scoring in handleScore (task 9)", () => {
   // Get a real lead + audit through the normal pipeline (mock audit, http/mock mode
   // → screenshot paths are null), then drive lead.score directly so the test owns
   // the screenshot paths and the stub.
+  // Email is owner-provided so contact resolves immediately and audit always runs
+  // (no email discovery needed — the reorder means no audit without a contact).
   async function leadAndAudit(name: string) {
-    ingestLead(ctx, lead(name, `https://${name.toLowerCase().replace(/\s+/g, "-")}.example.com`));
+    const slug = name.toLowerCase().replace(/\s+/g, "-");
+    ingestLead(ctx, lead(name, `https://${slug}.example.com`, `owner@${slug}.example.com`));
     await runUntilEmpty(ctx, 100, futureClock);
     const l = ctx.store.leads.list()[0]!;
     const audit = ctx.store.audits.list({ leadId: l.id })[0]!;
