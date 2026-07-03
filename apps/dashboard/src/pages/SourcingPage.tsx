@@ -13,6 +13,20 @@ interface SourcingRun {
   qualifiedCount: number;
   resultNote: string | null;
   createdAt: string;
+  mode?: "normal" | "batch";
+  currentNiche?: string | null;
+}
+
+/** How to label the Niche column. Batch runs sweep every niche, so showing the
+ *  base `niche` field (the first in the queue) reads as if only that one niche
+ *  is sourced. Show "All niches" instead, plus which one is being swept now. */
+function nicheLabel(r: SourcingRun): string {
+  const label = (n: string) => NICHE_META[n as keyof typeof NICHE_META]?.label ?? n;
+  if (r.mode === "batch") {
+    const current = r.currentNiche ?? r.niche;
+    return r.status === "running" ? `All niches (on: ${label(current)})` : "All niches (batch)";
+  }
+  return label(r.niche);
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -162,7 +176,7 @@ export function SourcingPage() {
             {runs.map((r) => (
               <tr key={r.id}>
                 <td>{r.location}</td>
-                <td>{NICHE_META[r.niche as keyof typeof NICHE_META]?.label ?? r.niche}</td>
+                <td>{nicheLabel(r)}</td>
                 <td>
                   <span className={`badge ${STATUS_COLOR[r.status] ?? ""}`}>{r.status}</span>
                 </td>

@@ -2,26 +2,32 @@ import type { Lead, LeadStatus } from "@william/core";
 import type { AppContext } from "./context";
 
 /**
- * Statuses where a lead is still moving through audit→contact→score→draft.
+ * Statuses where a lead is still moving through contact→audit→score→draft AND
+ * will change state on its own via the queue.
  *
- * A lead is in-flight ONLY while it is still being audited/scored/drafted.
- * Once it reaches `draft_ready` it HAS a draft (its sourcing outcome is known)
- * and will NOT advance further during a run — sending requires owner approval
- * + a gated SEND_FIRST_TOUCH send, which does not happen mid-run. Counting
- * `draft_ready` or `approved_for_send` as in-flight would cause the controller
- * to wait forever on those leads and never source the next page, eventually
- * exhausting its check cap and failing without ever reaching its target.
+ * A lead is in-flight ONLY while a downstream job will still advance it. Once a
+ * lead reaches `scored` its sourcing outcome is DECIDED: it either scored above
+ * the threshold (an `outreach.draft` job is already enqueued and it will become
+ * `draft_ready`, counted by countQualified) or it scored at/below the threshold
+ * and is KEPT-NOT-EMAILED — it stays `scored` permanently with no draft. A
+ * below-threshold lead therefore never leaves `scored`, so counting `scored` as
+ * in-flight made the controller wait on it forever: it re-enqueued every tick,
+ * never sourced the next page or advanced the niche sweep, exhausted its check
+ * cap, and ended `failed`. That froze every large batch run that ingested even
+ * one below-threshold lead. `scored` is thus resolved for sourcing purposes.
  *
- * Everything from `draft_ready` onward is resolved for sourcing purposes:
- * either it has a draft (counted by countQualified), or it is terminal-negative
- * (disqualified / not_interested / do_not_contact), or it is post-contact
- * (contacted / replied / opportunity / customer).
+ * (Same failure mode previously fixed for `draft_ready` / `approved_for_send`,
+ * which are likewise resolved — they already have a draft.)
+ *
+ * Everything from `scored` onward is resolved: it has a draft (counted by
+ * countQualified) or is below-threshold-kept, terminal-negative (disqualified /
+ * not_interested / do_not_contact), or post-contact (contacted / replied /
+ * opportunity / customer).
  */
 export const IN_FLIGHT_STATUSES: ReadonlySet<LeadStatus> = new Set<LeadStatus>([
   "new",
   "auditing",
   "audited",
-  "scored",
   "contact_ready",
 ]);
 

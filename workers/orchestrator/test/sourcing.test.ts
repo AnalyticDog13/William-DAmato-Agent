@@ -560,6 +560,73 @@ describe("lead.source controller", () => {
     expect(after.candidatesIngested).toBe(2);
   });
 
+  it("batch run advances niches with REALISTIC Places pagination (non-empty last page, null token)", async () => {
+    // Regression guard for the batch-never-sweeps bug.
+    //
+    // The other batch tests advance the niche only because their mock emits an
+    // explicitly EMPTY page (`businesses: []`) after the last real page. Real
+    // Google Places never does that — it returns the last page WITH results and
+    // simply omits `nextPageToken`. Re-querying with a null pageToken then
+    // restarts at page 1. Under that realistic shape the old controller (which
+    // advanced only on `businesses.length === 0`) would re-fetch page 1 of the
+    // first niche forever, never reaching the second niche, and end `failed`
+    // after MAX_SOURCING_CHECKS — effectively sourcing only ONE niche.
+    //
+    // Here each niche is a single non-empty page with a null token (the common
+    // real case: a city has fewer than 20 of a given business type).
+    //   bb-coffee.example.com → charcode-sum 2016 → %3=0 → bad=0 → qualifies
+    //   bb-salon.example.com  → charcode-sum 1941 → %3=0 → bad=0 → qualifies
+    configureEnrichment(ctx, "sandbox");
+    ctx.integrations.enrichment.findContacts = async (_t, domain) => [
+      { email: `info@${domain}`, name: null, role: null, confidence: 0.8, provider: "stub" },
+    ];
+
+    const queried: string[] = [];
+    ctx.integrations.places.searchBusinesses = async (_t, input) => {
+      queried.push(input.query);
+      if (input.query.includes("coffee shops")) {
+        // Single non-empty page, no further pages (null token). A null-token
+        // re-query restarts at page 1 — exactly how the real API behaves.
+        return {
+          businesses: [{
+            name: "BB Coffee", niche: "coffee_shop",
+            websiteUrl: "https://bb-coffee.example.com",
+            phone: null, address: null, city: "Ithaca", rating: 4,
+          }],
+          nextPageToken: null,
+        };
+      }
+      if (input.query.includes("hair salons")) {
+        return {
+          businesses: [{
+            name: "BB Salon", niche: "hair_salon",
+            websiteUrl: "https://bb-salon.example.com",
+            phone: null, address: null, city: "Ithaca", rating: 4,
+          }],
+          nextPageToken: null,
+        };
+      }
+      return { businesses: [], nextPageToken: null };
+    };
+
+    const run = approvedBatchRun(ctx, 1, 10, ["coffee_shop", "hair_salon"] as Niche[]);
+    ctx.store.queue.enqueue({
+      type: "lead.source",
+      payload: { sourcingRunId: run.id },
+      traceId: run.traceId,
+    });
+
+    await runUntilEmpty(ctx, 500, futureClock);
+
+    const after = ctx.store.sourcingRuns.get(run.id)!;
+    // The sweep must FINISH (not fail on the check cap) and must have advanced
+    // past the first niche to the second.
+    expect(after.status).toBe("stopped_exhausted");
+    expect(queried.some((q) => q.includes("hair salons"))).toBe(true);
+    // Both niches contributed a lead (coffee + salon).
+    expect(after.candidatesIngested).toBe(2);
+  });
+
   it("no-ops if the run is already completed when the job fires", async () => {
     const run = approvedRun(ctx, 1, 40);
     // Mark it completed before the job runs.
@@ -641,5 +708,61 @@ describe("lead.source controller", () => {
     // qualifiedCount must reflect the re-counted value written by stop().
     // Before Fix 1 this would be 0 (stale snapshot); after Fix 1 it is 1.
     expect(after.qualifiedCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not freeze on a below-threshold lead (scored is resolved, not in-flight)", async () => {
+    // Regression guard for the IN_FLIGHT_STATUSES bug on `scored`.
+    //
+    // A lead whose site scores at/below OUTREACH_SCORE_THRESHOLD terminates
+    // PERMANENTLY at status `scored` (kept, not emailed — it never gets a draft).
+    // When `scored` was counted as in-flight, the controller saw that lead as
+    // "still flowing" forever: it re-enqueued every tick, never sourced the next
+    // page, exhausted MAX_SOURCING_CHECKS, and ended `failed`. This is exactly
+    // what killed the large batch runs — any batch that ingested a single
+    // below-threshold lead froze and failed on the check cap.
+    //
+    //   b-coffee.example.com → charcode-sum → %3=1 → bad=1 → score ~31 (≤45)
+    //   → below threshold → stays `scored`, no draft.
+    //
+    // After the fix `scored` is resolved, so the controller advances past the
+    // stuck lead and finishes cleanly (page 2 is empty → stopped_exhausted)
+    // instead of failing on the check cap.
+    configureEnrichment(ctx, "sandbox");
+    ctx.integrations.enrichment.findContacts = async (_t, domain) => [
+      { email: `info@${domain}`, name: null, role: null, confidence: 0.8, provider: "stub" },
+    ];
+    let callCount = 0;
+    ctx.integrations.places.searchBusinesses = async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return {
+          businesses: [{
+            name: "B Coffee", niche: "coffee_shop",
+            websiteUrl: "https://b-coffee.example.com",
+            phone: null, address: null, city: "Ithaca", rating: 4,
+          }],
+          nextPageToken: null,
+        };
+      }
+      // Every later page is empty → normal-mode exhaustion, reachable only if the
+      // below-threshold lead is treated as resolved (not perpetually in-flight).
+      return { businesses: [], nextPageToken: null };
+    };
+
+    // target=5 is never met (the sole lead is below threshold); cap=40 is never
+    // hit. The only clean terminal state is stopped_exhausted.
+    const run = approvedRun(ctx, 5, 40);
+    ctx.store.queue.enqueue({
+      type: "lead.source",
+      payload: { sourcingRunId: run.id },
+      traceId: run.traceId,
+    });
+
+    await runUntilEmpty(ctx, 500, futureClock);
+
+    const after = ctx.store.sourcingRuns.get(run.id)!;
+    // Under the bug this is "failed" (froze on the scored lead, hit the check cap).
+    expect(after.status).toBe("stopped_exhausted");
+    expect(after.candidatesIngested).toBe(1);
   });
 });

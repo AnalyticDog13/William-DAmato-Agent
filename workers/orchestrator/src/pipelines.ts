@@ -648,29 +648,6 @@ const handleLeadSource: JobHandler = async (ctx, job) => {
     pageToken: updated.nextPageToken,
   });
 
-  if (page.businesses.length === 0) {
-    if (sweeping) {
-      // This niche is exhausted — advance to the next one in the queue.
-      const rest = run.nicheQueue.filter((n) => n !== niche);
-      if (rest.length === 0) {
-        stop("stopped_exhausted", `Swept all niches — ${qualifiedCount} qualified, ${updated.candidatesIngested} ingested.`);
-        return;
-      }
-      ctx.store.sourcingRuns.save({
-        ...updated,
-        currentNiche: rest[0]!,
-        nicheQueue: rest,
-        nextPageToken: null,
-        checks,
-        updatedAt: nowIso(),
-      });
-      reEnqueue();
-      return;
-    }
-    stop("stopped_exhausted", `No more results — found ${qualifiedCount} of ${run.target}.`);
-    return;
-  }
-
   // Ingest businesses up to the remaining capacity.
   const remaining = run.candidateCap - updated.candidatesIngested;
   const newLeadIds: string[] = [];
@@ -691,16 +668,61 @@ const handleLeadSource: JobHandler = async (ctx, job) => {
     if (result.outcome === "created") newLeadIds.push(result.lead.id);
   }
 
-  // Persist updated run state and re-enqueue for the next check cycle.
-  ctx.store.sourcingRuns.save({
+  const candidatesIngested = updated.candidatesIngested + newLeadIds.length;
+  const progress = {
     ...updated,
     leadIds: [...updated.leadIds, ...newLeadIds],
-    candidatesIngested: updated.candidatesIngested + newLeadIds.length,
-    nextPageToken: page.nextPageToken,
+    candidatesIngested,
     checks,
     qualifiedCount,
     updatedAt: nowIso(),
-  });
+  };
+
+  // Cap takes priority: if this page filled the candidate budget, stop as capped
+  // (even if the niche or sweep still has pages left).
+  if (candidatesIngested >= run.candidateCap) {
+    ctx.store.sourcingRuns.save({ ...progress, nextPageToken: page.nextPageToken });
+    stop("stopped_cap", `Hit candidate cap (${run.candidateCap}) — found ${qualifiedCount} of ${run.target}.`);
+    return;
+  }
+
+  // Has THIS niche run out of pages? Google Places signals the end of pagination
+  // by OMITTING nextPageToken on the last page — which still carries results; it
+  // does NOT emit a trailing empty page. So "no nextPageToken" is the only
+  // reliable end-of-niche signal (a zero-result niche has no token either).
+  // Re-querying with a null pageToken restarts at page 1, so in batch mode we
+  // MUST advance to the next niche here rather than fall through and re-fetch the
+  // same niche forever (the bug that made batch runs sweep only one niche).
+  const nicheExhausted = !page.nextPageToken;
+
+  if (sweeping && nicheExhausted) {
+    const rest = run.nicheQueue.filter((n) => n !== niche);
+    if (rest.length === 0) {
+      ctx.store.sourcingRuns.save({ ...progress, nextPageToken: null });
+      stop("stopped_exhausted", `Swept all niches — ${qualifiedCount} qualified, ${candidatesIngested} ingested.`);
+      return;
+    }
+    ctx.store.sourcingRuns.save({
+      ...progress,
+      currentNiche: rest[0]!,
+      nicheQueue: rest,
+      nextPageToken: null,
+    });
+    reEnqueue();
+    return;
+  }
+
+  // Normal mode with a zero-result page: this single-niche run has no more
+  // results to offer, so finalize as exhausted.
+  if (!sweeping && page.businesses.length === 0) {
+    ctx.store.sourcingRuns.save({ ...progress, nextPageToken: null });
+    stop("stopped_exhausted", `No more results — found ${qualifiedCount} of ${run.target}.`);
+    return;
+  }
+
+  // Otherwise there are more pages for this niche (or a normal-mode page with
+  // results): persist the page token and re-enqueue for the next check cycle.
+  ctx.store.sourcingRuns.save({ ...progress, nextPageToken: page.nextPageToken });
   reEnqueue();
 };
 
