@@ -47,20 +47,22 @@ function stripDashes(s: string): string {
 export function createFirstTouchDraft(input: DraftInput): OutreachDraft {
   const { lead, company, contact, audit } = input;
   const firstName = contact.name?.split(/\s+/)[0];
-  const greeting = firstName ? `Dear ${firstName},` : `Hi there,`;
+  const greeting = firstName ? `Hi ${firstName},` : `Hi there,`;
   const niche = NICHE_META[lead.niche].label.toLowerCase();
   const place = company.city ? `${company.city} ${niche}` : `local ${niche}`;
 
-  const angles = audit.outreachAngles.slice(0, 2);
+  // One concrete observation reads like a person who actually looked; a list of
+  // findings reads like an audit report. Keep it to the single strongest angle.
+  const angles = audit.outreachAngles.slice(0, 1);
   const finding =
     angles.length > 0
-      ? `I noticed ${joinAngles(angles)}, which probably costs you a few customers`
-      : `I think a few quick changes could help you get more customers from your site`;
+      ? `I had a look at your site and noticed ${joinAngles(angles)}, which is probably costing you a bit of business`
+      : `I had a look at your site and think a few quick changes could help you win over more of the people who land there`;
 
   let body = [
     greeting,
     "",
-    `I'm Will, a student at Cornell, and I came across ${company.name} while looking at ${place} sites. ${finding}. I actually put together a quick mockup of how it could look, and I'd be happy to send it over if you want a peek. Either way, no worries at all if now's not a good time.`,
+    `I'm Will, a student at Cornell, and I came across ${company.name} while looking at ${place} sites. ${finding}. I actually put together a quick mockup of how your site could look, and I'd be happy to send it over if you'd like a peek. Either way, no pressure at all if now isn't a good time.`,
     "",
     `Thanks,`,
     `Will`,

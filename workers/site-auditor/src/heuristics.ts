@@ -83,19 +83,19 @@ export function deriveFindings(signals: ExtractedSignals, loadMs: number | null)
 
   if (!signals.usesHttps) {
     weaknesses.push({ category: "technical", detail: "Site served over HTTP — browsers flag it 'Not secure'.", severity: "high" });
-    angles.push("their site shows a 'Not secure' warning to every visitor");
+    angles.push("it shows a 'Not secure' warning to every visitor");
   }
   if (!signals.hasViewportMeta) {
     weaknesses.push({ category: "mobile", detail: "No viewport meta tag — page is not mobile-optimized.", severity: "high" });
-    angles.push("their site doesn't adapt to phones, where most local searches happen");
+    angles.push("it doesn't adapt to phones, where most of your customers are searching");
   }
   if (!signals.hasTitleAndDescription) {
     weaknesses.push({ category: "seo", detail: "Missing title/meta description — weak search appearance.", severity: "medium" });
-    angles.push("Google shows incomplete info for their business");
+    angles.push("Google shows incomplete info for your business");
   }
   if (signals.ctas.length === 0) {
     weaknesses.push({ category: "conversion", detail: "No clear call-to-action (book/order/contact).", severity: "high" });
-    angles.push("visitors have no obvious next step, with no booking or contact button");
+    angles.push("there's no obvious next step for visitors, with no booking or contact button");
   }
   if (signals.trustSignals.length === 0) {
     weaknesses.push({ category: "trust", detail: "No reviews/testimonials/credentials visible.", severity: "medium" });
@@ -136,5 +136,5 @@ export const SLOW_PERFORMANCE_SCORE = 50;
 export function lighthouseSlowAngle(lighthouse: WebsiteAudit["lighthouse"]): string | null {
   const perf = lighthouse?.performance;
   if (perf == null || perf >= SLOW_PERFORMANCE_SCORE) return null;
-  return "their website is slow to load on a typical phone, which can lose impatient visitors";
+  return "it's slow to load on a typical phone, which can lose impatient visitors";
 }

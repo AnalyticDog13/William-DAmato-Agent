@@ -60,7 +60,7 @@ export async function auditWebsite(lead: Lead, deps: AuditorDeps): Promise<Websi
       ...base,
       summary: "No website found for this business — a complete build opportunity.",
       auditScore: 0,
-      outreachAngles: ["they have no website at all"],
+      outreachAngles: ["you don't have a website yet"],
       visualAssessment: null,
     };
   }
@@ -155,9 +155,9 @@ function mockAudit(lead: Lead, base: Omit<WebsiteAudit, "summary" | "auditScore"
     weaknesses,
     outreachAngles:
       bad === 0
-        ? ["their site is hard to use on a phone", "their homepage takes ~6 seconds to load", "there is no way to book online"]
+        ? ["it's hard to use on a phone", "your homepage takes ~6 seconds to load", "there is no way to book online"]
         : bad === 1
-          ? ["their business barely shows up in Google results", "visitors can't find contact info quickly"]
+          ? ["your business barely shows up in Google results", "visitors can't find your contact info quickly"]
           : ["a small refresh could lift conversions"],
     summary:
       bad === 0
@@ -201,7 +201,7 @@ async function httpAudit(
       hasWebsite: false,
       summary: `Website unreachable (${err instanceof Error ? err.message : "fetch failed"}) — treat as no-website lead.`,
       auditScore: 5,
-      outreachAngles: ["their listed website doesn't load at all"],
+      outreachAngles: ["your listed website doesn't load at all"], // fine after "noticed"
       visualAssessment: null,
     };
   }
